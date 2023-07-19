@@ -1,0 +1,103 @@
+use crate::bus::Bus;
+
+mod addr_mode;
+mod op;
+
+enum Flag {
+    Carry = 0x01,
+    Zero = 0x02,
+    NoInterupts = 0x04,
+    DecimalMode = 0x08,
+    Break = 0x10,
+    Overflow = 0x40,
+    Negative = 0x80,
+}
+
+#[derive(Default)]
+struct ProgramCounter(u16);
+impl ProgramCounter {
+    pub fn adv(&mut self) -> u16 {
+        let val = self.0;
+        self.0 = self.0.wrapping_add(1);
+        val
+    }
+}
+
+#[derive(Default)]
+struct Cpu {
+    acc: u8,
+    x: u8,
+    y: u8,
+    stk_ptr: u8,
+    prg_cntr: ProgramCounter,
+    flags: u8,
+    cycles: u8,
+
+    op_addr: Option<u16>,
+}
+
+impl Cpu {
+    pub fn tick(&mut self, bus: &mut Bus) {
+        if self.cycles == 0 {
+            let opcode = bus.read(self.prg_cntr.adv());
+            let additional_cycle = self.addr_mode(opcode, bus) && self.operate(opcode);
+            if additional_cycle {
+                self.cycles += 1;
+            }
+        }
+        self.cycles -= 1;
+    }
+    pub fn reset(&mut self) {}
+    // standard interrupt request
+    pub fn irq(&mut self) {}
+    // non-maskable interrupt request
+    pub fn nmi(&mut self) {}
+
+    fn set_flag(&mut self, flag: Flag, value: bool) {
+        self.flags = match value {
+            true => self.flags | flag as u8,
+            false => self.flags & !(flag as u8),
+        }
+    }
+
+    fn get_flag(&self, flag: Flag) -> bool {
+        self.flags & (flag as u8) != 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cpu, Flag};
+
+    #[test]
+    fn set_flag() {
+        let mut cpu = Cpu::default();
+
+        assert_eq!(cpu.flags, 0b00000000);
+        cpu.set_flag(Flag::Zero, true);
+        assert_eq!(cpu.flags, 0b00000010);
+        cpu.set_flag(Flag::Break, true);
+        assert_eq!(cpu.flags, 0b00010010);
+        cpu.set_flag(Flag::Negative, true);
+        assert_eq!(cpu.flags, 0b10010010);
+        cpu.set_flag(Flag::Break, true);
+        assert_eq!(cpu.flags, 0b10010010);
+        cpu.set_flag(Flag::Break, false);
+        assert_eq!(cpu.flags, 0b10000010);
+        cpu.set_flag(Flag::Carry, true);
+        assert_eq!(cpu.flags, 0b10000011);
+    }
+
+    #[test]
+    fn get_flag() {
+        let mut cpu = Cpu::default();
+        cpu.flags = 0b00110110;
+
+        assert!(cpu.get_flag(Flag::Zero));
+        assert!(!cpu.get_flag(Flag::Carry));
+        assert!(!cpu.get_flag(Flag::Negative));
+
+        cpu.flags = 0b00110101;
+        assert!(cpu.get_flag(Flag::Carry));
+    }
+}
