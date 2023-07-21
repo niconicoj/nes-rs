@@ -23,8 +23,8 @@ impl ProgramCounter {
     }
 }
 
-#[derive(Default)]
 struct Cpu {
+    bus: Bus,
     acc: u8,
     x: u8,
     y: u8,
@@ -37,10 +37,24 @@ struct Cpu {
 }
 
 impl Cpu {
-    pub fn tick(&mut self, bus: &mut Bus) {
+    pub fn new(bus: Bus) -> Self {
+    Self {
+            bus,
+            acc: 0,
+            x: 0,
+            y: 0,
+            stk_ptr: 0xFF,
+            prg_cntr: ProgramCounter(0),
+            flags: 0,
+            cycles: 0,
+            op_addr: None
+        }
+    }
+
+    pub fn tick(&mut self) {
         if self.cycles == 0 {
-            let opcode = bus.read(self.prg_cntr.adv());
-            let additional_cycle = self.addr_mode(opcode, bus) && self.operate(opcode);
+            let opcode = self.bus.read(self.prg_cntr.adv());
+            let additional_cycle = self.addr_mode(opcode) && self.operate(opcode);
             if additional_cycle {
                 self.cycles += 1;
             }
@@ -63,15 +77,28 @@ impl Cpu {
     fn get_flag(&self, flag: Flag) -> bool {
         self.flags & (flag as u8) != 0
     }
+
+    pub fn stk_push(&mut self, data: u8) {
+        self.bus.write(0x100_u16.wrapping_add(self.stk_ptr as u16), data);
+        self.stk_ptr = self.stk_ptr.wrapping_sub(1);
+    }
+
+    pub fn stk_pull(&mut self) -> u8 {
+        self.stk_ptr = self.stk_ptr.wrapping_add(1);
+        self.bus.read(0x100_u16.wrapping_add(self.stk_ptr as u16))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::bus::Bus;
+
     use super::{Cpu, Flag};
 
     #[test]
     fn set_flag() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
 
         assert_eq!(cpu.flags, 0b00000000);
         cpu.set_flag(Flag::Zero, true);
@@ -90,7 +117,9 @@ mod tests {
 
     #[test]
     fn get_flag() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
         cpu.flags = 0b00110110;
 
         assert!(cpu.get_flag(Flag::Zero));

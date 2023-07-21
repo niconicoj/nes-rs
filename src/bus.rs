@@ -1,18 +1,26 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::ram::Ram;
 
-#[derive(Default)]
+#[derive(Clone)]
 pub struct Bus {
-    ram: Ram<0xFFFF>,
+    data: Rc<RefCell<[u8; 0x10000]>>,
+}
+
+impl Default for Bus {
+    fn default() -> Self {
+        Self {
+            data: Rc::new(RefCell::new([0; 0x10000])),
+        }
+    }
 }
 
 impl Bus {
     pub fn read(&self, addr: u16) -> u8 {
-        match addr {
-            0x0000..=0xFFFF => self.ram.read(addr),
-        }
+        self.data.borrow()[addr as usize]
     }
 
     pub fn write(&mut self, addr: u16, data: u8) {
-        self.ram.write(addr, data)
+        self.data.borrow_mut()[addr as usize] = data;
     }
 }

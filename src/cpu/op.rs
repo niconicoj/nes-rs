@@ -1,5 +1,3 @@
-use crate::bus::Bus;
-
 use super::{Cpu, Flag};
 
 impl Cpu {
@@ -7,20 +5,30 @@ impl Cpu {
         false
     }
 
-    fn fetch(&self, bus: &Bus) -> u8 {
-        self.op_addr.map(|addr| bus.read(addr)).unwrap_or(self.acc)
+
+    fn fetch(&self) -> u8 {
+        self.op_addr
+            .map(|addr| self.bus.read(addr))
+            .unwrap_or(self.acc)
     }
 
-    fn and(&mut self, bus: &Bus) -> bool {
-        let fetched = self.fetch(bus);
+    fn write(&mut self, val: u8) {
+        match self.op_addr {
+            Some(addr) => self.bus.write(addr, val),
+            None => self.acc = val,
+        }
+    }
+
+    fn and(&mut self) -> bool {
+        let fetched = self.fetch();
         self.acc &= fetched;
         self.set_flag(Flag::Zero, self.acc == 0);
         self.set_flag(Flag::Negative, self.acc & 0x80 != 0);
         true
     }
 
-    fn adc(&mut self, bus: &Bus) -> bool {
-        let fetched = self.fetch(bus);
+    fn adc(&mut self) -> bool {
+        let fetched = self.fetch();
 
         let add_acc = self.acc.overflowing_add(fetched);
         let result = add_acc.0.overflowing_add(self.flags & 0b1);
@@ -37,8 +45,8 @@ impl Cpu {
         true
     }
 
-    fn sbc(&mut self, bus: &Bus) -> bool {
-        let fetched = !self.fetch(bus);
+    fn sbc(&mut self) -> bool {
+        let fetched = !self.fetch();
 
         let add_acc = self.acc.overflowing_add(fetched);
         let result = add_acc.0.overflowing_add(self.flags & 0b1);
@@ -75,6 +83,26 @@ impl Cpu {
         true
     }
 
+    fn bmi(&mut self) -> bool {
+        self.branch(self.get_flag(Flag::Negative));
+        true
+    }
+
+    fn bpl(&mut self) -> bool {
+        self.branch(!self.get_flag(Flag::Negative));
+        true
+    }
+
+    fn bvc(&mut self) -> bool {
+        self.branch(!self.get_flag(Flag::Overflow));
+        true
+    }
+
+    fn bvs(&mut self) -> bool {
+        self.branch(self.get_flag(Flag::Overflow));
+        true
+    }
+
     fn branch(&mut self, val: bool) {
         if val {
             self.prg_cntr.0 = self
@@ -82,6 +110,354 @@ impl Cpu {
                 .0
                 .wrapping_add(self.op_addr.expect("no operand for relative branching"));
         }
+    }
+
+    fn brk(&mut self) -> bool {
+        self.set_flag(Flag::NoInterupts, true);
+        let prg_cntr_bytes = self.prg_cntr.0.to_be_bytes();
+        self.stk_push(prg_cntr_bytes[0]);
+        self.stk_push(prg_cntr_bytes[1]);
+
+        self.set_flag(Flag::Break, true);
+        self.stk_push(self.flags);
+        self.set_flag(Flag::Break, false);
+
+        self.prg_cntr.0 = (self.bus.read(0xFFFE) as u16) | (self.bus.read(0xFFFF) as u16) << 8;
+        false
+    }
+
+    fn clc(&mut self) -> bool {
+        self.set_flag(Flag::Carry, false);
+        false
+    }
+
+    fn cld(&mut self) -> bool {
+        self.set_flag(Flag::DecimalMode, false);
+        false
+    }
+
+    fn cli(&mut self) -> bool {
+        self.set_flag(Flag::NoInterupts, false);
+        false
+    }
+
+    fn clv(&mut self) -> bool {
+        self.set_flag(Flag::Overflow, false);
+        false
+    }
+
+    fn asl(&mut self) -> bool {
+        let fetched = self.fetch();
+        let result = fetched << 1;
+
+        self.set_flag(Flag::Carry, result < fetched);
+        self.set_flag(Flag::Zero, result == 0);
+        self.set_flag(Flag::Negative, result & 0x80 != 0);
+
+        self.write(result);
+
+        false
+    }
+
+    fn lsr(&mut self) -> bool {
+        let fetched = self.fetch();
+        let result = fetched >> 1;
+
+        self.set_flag(Flag::Carry, result > fetched);
+        self.set_flag(Flag::Zero, result == 0);
+        self.set_flag(Flag::Negative, false);
+
+        self.write(result);
+
+        false
+    }
+
+    fn rol(&mut self) -> bool {
+        let fetched = self.fetch();
+        let result = fetched << 1 | self.get_flag(Flag::Carry) as u8;
+
+        self.set_flag(Flag::Carry, fetched & 0x80 != 0);
+        self.set_flag(Flag::Zero, result == 0);
+        self.set_flag(Flag::Negative, result & 0x80 != 0);
+
+        self.write(result);
+
+        false
+    }
+
+    fn ror(&mut self) -> bool {
+        let fetched = self.fetch();
+        let result = fetched >> 1 | (self.get_flag(Flag::Carry) as u8) << 7;
+
+        self.set_flag(Flag::Carry, fetched & 0x1 != 0);
+        self.set_flag(Flag::Zero, result == 0);
+        self.set_flag(Flag::Negative, result & 0x80 != 0);
+
+        self.write(result);
+
+        false
+    }
+
+    fn bit(&mut self) -> bool {
+        let fetched = self.fetch();
+
+        self.set_flag(Flag::Zero, fetched & self.acc == 0);
+        self.set_flag(Flag::Overflow, fetched & 0x40 != 0);
+        self.set_flag(Flag::Negative, fetched & 0x80 != 0);
+
+        false
+    }
+
+    fn cmp(&mut self) -> bool {
+        self.compare(self.acc);
+        true
+    }
+
+    fn cpx(&mut self) -> bool {
+        self.compare(self.x);
+        true
+    }
+
+    fn cpy(&mut self) -> bool {
+        self.compare(self.y);
+        true
+    }
+
+    fn compare(&mut self, val: u8) {
+        let fetched = self.fetch();
+        self.set_flag(Flag::Carry, val >= fetched);
+        self.set_flag(Flag::Zero, val == fetched);
+        self.set_flag(Flag::Negative, val.wrapping_sub(fetched) & 0x80 != 0);
+    }
+
+    fn dec(&mut self) -> bool {
+        let val = self.fetch();
+        let result = self.decrement(val);
+        self.write(result);
+        false
+    }
+
+    fn dex(&mut self) -> bool {
+        self.x = self.decrement(self.x);
+        false
+    }
+
+    fn dey(&mut self) -> bool {
+        self.y = self.decrement(self.y);
+        false
+    }
+
+    fn decrement(&mut self, val: u8) -> u8 {
+        let val = val.wrapping_sub(1);
+        self.set_flag(Flag::Zero, val == 0);
+        self.set_flag(Flag::Negative, val & 0x80 != 0);
+        val
+    }
+
+    fn eor(&mut self) -> bool {
+        let fetched = self.fetch();
+        self.acc = fetched ^ self.acc;
+
+        self.set_flag(Flag::Zero, self.acc == 0);
+        self.set_flag(Flag::Negative, self.acc & 0x80 != 0);
+
+        true
+    }
+
+    fn inc(&mut self) -> bool {
+        let val = self.fetch();
+        let result = self.increment(val);
+        self.write(result);
+        false
+    }
+
+    fn inx(&mut self) -> bool {
+        self.x = self.increment(self.x);
+        false
+    }
+
+    fn iny(&mut self) -> bool {
+        self.y = self.increment(self.y);
+        false
+    }
+
+    fn increment(&mut self, val: u8) -> u8 {
+        let val = val.wrapping_add(1);
+        self.set_flag(Flag::Zero, val == 0);
+        self.set_flag(Flag::Negative, val & 0x80 != 0);
+        val
+    }
+
+    fn jmp(&mut self) -> bool {
+        self.prg_cntr.0 = self.op_addr.expect("no operand for jump");
+        false
+    }
+
+    fn jsr(&mut self) -> bool {
+        let prg_cntr_bytes = self.prg_cntr.0.to_be_bytes();
+        self.stk_push(prg_cntr_bytes[0]);
+        self.stk_push(prg_cntr_bytes[1]);
+
+        self.prg_cntr.0 = self.op_addr.expect("no operand for jsr");
+
+        false
+    }
+
+    fn lda(&mut self) -> bool {
+        self.acc = self.fetch();
+
+        self.set_flag(Flag::Zero, self.acc == 0);
+        self.set_flag(Flag::Negative, self.acc & 0x80 != 0);
+
+        true
+    }
+
+    fn ldx(&mut self) -> bool {
+        self.x = self.fetch();
+
+        self.set_flag(Flag::Zero, self.x == 0);
+        self.set_flag(Flag::Negative, self.x & 0x80 != 0);
+
+        true
+    }
+
+    fn ldy(&mut self) -> bool {
+        self.y = self.fetch();
+
+        self.set_flag(Flag::Zero, self.y == 0);
+        self.set_flag(Flag::Negative, self.y & 0x80 != 0);
+
+        true
+    }
+
+    fn nop(&self) {}
+
+    fn ora(&mut self) -> bool {
+        self.acc = self.acc | self.fetch();
+
+        self.set_flag(Flag::Zero, self.acc == 0);
+        self.set_flag(Flag::Negative, self.acc & 0x80 != 0);
+
+        true
+    }
+
+    fn pha(&mut self) -> bool {
+        self.stk_push(self.acc);
+        false
+    }
+
+    fn php(&mut self) -> bool {
+        self.stk_push(self.flags);
+        false
+    }
+
+    fn pla(&mut self) -> bool {
+        self.acc = self.stk_pull();
+        false
+    }
+
+    fn plp(&mut self) -> bool {
+        self.flags = self.stk_pull();
+        false
+    }
+
+    fn rti(&mut self) -> bool {
+        self.flags = self.stk_pull();
+        self.set_flag(Flag::Break, false);
+        self.set_flag(Flag::NoInterupts, false);
+
+        self.prg_cntr.0 = u16::from_le_bytes([self.stk_pull(), self.stk_pull()]);
+        false
+    }
+
+    fn rts(&mut self) -> bool {
+        self.prg_cntr.0 = u16::from_le_bytes([self.stk_pull(), self.stk_pull()]);
+        self.prg_cntr.0 += 1;
+        false
+    }
+
+    fn sec(&mut self) -> bool {
+        self.set_flag(Flag::Carry, true);
+        false
+    }
+
+    fn sed(&mut self) -> bool {
+        self.set_flag(Flag::DecimalMode, true);
+        false
+    }
+
+    fn sei(&mut self) -> bool {
+        self.set_flag(Flag::NoInterupts, true);
+        false
+    }
+
+    fn sta(&mut self) -> bool {
+        self.write(self.acc);
+        false
+    }
+
+    fn stx(&mut self) -> bool {
+        self.write(self.x);
+        false
+    }
+
+    fn sty(&mut self) -> bool {
+        self.write(self.y);
+        false
+    }
+
+    fn tax(&mut self) -> bool {
+        self.x = self.acc;
+
+        self.set_flag(Flag::Zero, self.x == 0);
+        self.set_flag(Flag::Negative, self.x & 0x80 != 0);
+
+        false
+    }
+
+    fn tay(&mut self) -> bool {
+        self.y = self.acc;
+
+        self.set_flag(Flag::Zero, self.y == 0);
+        self.set_flag(Flag::Negative, self.y & 0x80 != 0);
+
+        false
+    }
+
+    fn tsx(&mut self) -> bool {
+        self.x = self.stk_ptr;
+
+        self.set_flag(Flag::Zero, self.x == 0);
+        self.set_flag(Flag::Negative, self.x & 0x80 != 0);
+
+        false
+    }
+
+    fn txa(&mut self) -> bool {
+        self.acc = self.x;
+
+        self.set_flag(Flag::Zero, self.acc == 0);
+        self.set_flag(Flag::Negative, self.acc & 0x80 != 0);
+
+        false
+    }
+
+    fn txs(&mut self) -> bool {
+        self.stk_ptr = self.x;
+
+        self.set_flag(Flag::Zero, self.stk_ptr == 0);
+        self.set_flag(Flag::Negative, self.stk_ptr & 0x80 != 0);
+
+        false
+    }
+
+    fn tya(&mut self) -> bool {
+        self.acc = self.y;
+
+        self.set_flag(Flag::Zero, self.y == 0);
+        self.set_flag(Flag::Negative, self.y & 0x80 != 0);
+
+        false
     }
 }
 
@@ -94,20 +470,20 @@ mod tests {
 
     #[test]
     fn and() {
-        let mut cpu = Cpu::default();
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         cpu.op_addr = Some(0x01);
         cpu.acc = 0b0101_1100;
 
-        let mut bus = Bus::default();
         bus.write(0x01, 0b1101_0110);
 
-        cpu.and(&bus);
+        cpu.and();
         assert_eq!(cpu.acc, 0b01010100);
         assert_eq!(cpu.flags, 0b00000000);
 
         cpu.op_addr = Some(0x02);
 
-        cpu.and(&bus);
+        cpu.and();
         assert_eq!(cpu.acc, 0b00000000);
         assert_eq!(cpu.flags, 0b00000010);
 
@@ -115,81 +491,81 @@ mod tests {
         cpu.acc = 0b10001100;
         cpu.flags = 0x0;
 
-        cpu.and(&bus);
+        cpu.and();
         assert_eq!(cpu.acc, 0b10000100);
         assert_eq!(cpu.flags, 0b10000000);
     }
 
     #[test]
     fn adc() {
-        let mut cpu = Cpu::default();
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         cpu.op_addr = Some(0x01);
         cpu.acc = 34;
-
-        let mut bus = Bus::default();
         bus.write(0x01, 56);
 
-        cpu.adc(&bus);
+        cpu.adc();
         assert_eq!(cpu.acc, 90);
         assert_eq!(cpu.flags, 0b00000000);
 
         cpu.acc = 90;
         bus.write(0x01, 56);
-        cpu.adc(&bus);
+        cpu.adc();
         assert_eq!(cpu.acc, 146);
         assert_eq!(cpu.flags, 0b11000000);
 
         bus.write(0x01, 110);
         cpu.flags = 0x0;
-        cpu.adc(&bus);
+        cpu.adc();
         assert_eq!(cpu.acc, 0);
         assert_eq!(cpu.flags, 0b00000011);
 
         cpu.flags = 0x0;
         cpu.acc = 135;
         bus.write(0x01, 145);
-        cpu.adc(&bus);
+        cpu.adc();
         assert_eq!(cpu.acc, 24);
         assert_eq!(cpu.flags, 0b01000001);
     }
 
     #[test]
     fn sbc() {
-        let mut cpu = Cpu::default();
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         cpu.op_addr = Some(0x01);
         cpu.acc = 34;
 
-        let mut bus = Bus::default();
         bus.write(0x01, 56);
 
-        cpu.sbc(&bus);
+        cpu.sbc();
         assert_eq!(cpu.acc, 233);
         assert_eq!(cpu.flags, 0b10000000);
 
         cpu.flags = 0x0;
         cpu.acc = 90;
         bus.write(0x01, 56);
-        cpu.sbc(&bus);
+        cpu.sbc();
         assert_eq!(cpu.acc, 33);
         assert_eq!(cpu.flags, 0b00000001);
 
         bus.write(0x01, 110);
         cpu.flags = 0x0;
-        cpu.sbc(&bus);
+        cpu.sbc();
         assert_eq!(cpu.acc, 178);
         assert_eq!(cpu.flags, 0b10000000);
 
         cpu.flags = 0x0;
         cpu.acc = 135;
         bus.write(0x01, 19);
-        cpu.sbc(&bus);
+        cpu.sbc();
         assert_eq!(cpu.acc, 115);
         assert_eq!(cpu.flags, 0b01000001);
     }
 
     #[test]
     fn bcc() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         let addr = 155;
         cpu.prg_cntr.0 = 0;
         cpu.op_addr = Some((addr as u16) | 0xFF00);
@@ -209,7 +585,8 @@ mod tests {
 
     #[test]
     fn bcs() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         let addr = 155;
         cpu.prg_cntr.0 = 0;
         cpu.op_addr = Some((addr as u16) | 0xFF00);
@@ -229,7 +606,8 @@ mod tests {
 
     #[test]
     fn beq() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         let addr = 155;
         cpu.prg_cntr.0 = 0;
         cpu.op_addr = Some((addr as u16) | 0xFF00);
@@ -249,7 +627,8 @@ mod tests {
 
     #[test]
     fn bne() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         let addr = 155;
         cpu.prg_cntr.0 = 0;
         cpu.op_addr = Some((addr as u16) | 0xFF00);
@@ -265,5 +644,918 @@ mod tests {
         cpu.op_addr = Some(13);
         cpu.bne();
         assert_eq!(cpu.prg_cntr.0, 65448);
+    }
+
+    #[test]
+    fn bmi() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        let addr = 155;
+        cpu.prg_cntr.0 = 0;
+        cpu.op_addr = Some((addr as u16) | 0xFF00);
+
+        cpu.set_flag(Flag::Negative, false);
+        cpu.bmi();
+        assert_eq!(cpu.prg_cntr.0, 0);
+
+        cpu.set_flag(Flag::Negative, true);
+        cpu.bmi();
+        assert_eq!(cpu.prg_cntr.0, 65435);
+
+        cpu.op_addr = Some(13);
+        cpu.bmi();
+        assert_eq!(cpu.prg_cntr.0, 65448);
+    }
+
+    #[test]
+    fn bpl() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        let addr = 155;
+        cpu.prg_cntr.0 = 0;
+        cpu.op_addr = Some((addr as u16) | 0xFF00);
+
+        cpu.set_flag(Flag::Negative, true);
+        cpu.bpl();
+        assert_eq!(cpu.prg_cntr.0, 0);
+
+        cpu.set_flag(Flag::Negative, false);
+        cpu.bpl();
+        assert_eq!(cpu.prg_cntr.0, 65435);
+
+        cpu.op_addr = Some(13);
+        cpu.bpl();
+        assert_eq!(cpu.prg_cntr.0, 65448);
+    }
+
+    #[test]
+    fn bvc() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        let addr = 155;
+        cpu.prg_cntr.0 = 0;
+        cpu.op_addr = Some((addr as u16) | 0xFF00);
+
+        cpu.set_flag(Flag::Overflow, true);
+        cpu.bvc();
+        assert_eq!(cpu.prg_cntr.0, 0);
+
+        cpu.set_flag(Flag::Overflow, false);
+        cpu.bvc();
+        assert_eq!(cpu.prg_cntr.0, 65435);
+
+        cpu.op_addr = Some(13);
+        cpu.bvc();
+        assert_eq!(cpu.prg_cntr.0, 65448);
+    }
+
+    #[test]
+    fn bvs() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        let addr = 155;
+        cpu.prg_cntr.0 = 0;
+        cpu.op_addr = Some((addr as u16) | 0xFF00);
+
+        cpu.set_flag(Flag::Overflow, false);
+        cpu.bvs();
+        assert_eq!(cpu.prg_cntr.0, 0);
+
+        cpu.set_flag(Flag::Overflow, true);
+        cpu.bvs();
+        assert_eq!(cpu.prg_cntr.0, 65435);
+
+        cpu.op_addr = Some(13);
+        cpu.bvs();
+        assert_eq!(cpu.prg_cntr.0, 65448);
+    }
+
+    #[test]
+    fn asl() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.prg_cntr.0 = 0;
+        cpu.acc = 123;
+        cpu.op_addr = Some(0x0001);
+
+        bus.write(0x01, 56);
+        bus.write(0x02, 156);
+        bus.write(0x03, 128);
+
+        cpu.op_addr = None;
+        test_asl(&mut cpu, &mut bus, 246, 0x80);
+        cpu.op_addr = Some(0x00);
+        test_asl(&mut cpu, &mut bus, 0, 0x02);
+        cpu.op_addr = Some(0x01);
+        test_asl(&mut cpu, &mut bus, 112, 0x00);
+        cpu.op_addr = Some(0x02);
+        test_asl(&mut cpu, &mut bus, 56, 0x01);
+        cpu.op_addr = Some(0x03);
+        test_asl(&mut cpu, &mut bus, 0, 0x03);
+    }
+
+    fn test_asl(cpu: &mut Cpu, bus: &mut Bus, expect: u8, flags: u8) {
+        assert!(!cpu.asl());
+        match cpu.op_addr {
+            Some(addr) => assert_eq!(bus.read(addr), expect),
+            None => assert_eq!(cpu.acc, expect),
+        }
+        assert_eq!(
+            cpu.flags, flags,
+            "invalid flags => expected {:#010b}, but was {:#010b}",
+            flags, cpu.flags
+        );
+    }
+
+    #[test]
+    fn lsr() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.prg_cntr.0 = 0;
+        cpu.acc = 123;
+        cpu.op_addr = Some(0x0001);
+
+        bus.write(0x01, 56);
+        bus.write(0x02, 156);
+        bus.write(0x03, 1);
+
+        cpu.op_addr = None;
+        test_lsr(&mut cpu, &mut bus, 61, 0x00);
+        cpu.op_addr = Some(0x00);
+        test_lsr(&mut cpu, &mut bus, 0, 0x02);
+        cpu.op_addr = Some(0x01);
+        test_lsr(&mut cpu, &mut bus, 28, 0x00);
+        cpu.op_addr = Some(0x02);
+        test_lsr(&mut cpu, &mut bus, 78, 0x00);
+        cpu.op_addr = Some(0x03);
+        test_lsr(&mut cpu, &mut bus, 0, 0x02);
+    }
+
+    fn test_lsr(cpu: &mut Cpu, bus: &mut Bus, expect: u8, flags: u8) {
+        assert!(!cpu.lsr());
+        match cpu.op_addr {
+            Some(addr) => assert_eq!(bus.read(addr), expect),
+            None => assert_eq!(cpu.acc, expect),
+        }
+        assert_eq!(
+            cpu.flags, flags,
+            "invalid flags => expected {:#010b}, but was {:#010b}",
+            flags, cpu.flags
+        );
+    }
+
+    #[test]
+    fn rol() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.prg_cntr.0 = 0;
+        cpu.acc = 123;
+        cpu.op_addr = Some(0x0001);
+
+        bus.write(0x01, 56);
+        bus.write(0x02, 156);
+        bus.write(0x03, 255);
+        bus.write(0x04, 1);
+
+        cpu.op_addr = None;
+        test_rol(&mut cpu, &mut bus, 246, 0x80);
+        cpu.op_addr = Some(0x00);
+        test_rol(&mut cpu, &mut bus, 0, 0x02);
+        cpu.op_addr = Some(0x01);
+        test_rol(&mut cpu, &mut bus, 112, 0x00);
+        cpu.op_addr = Some(0x02);
+        test_rol(&mut cpu, &mut bus, 56, 0x01);
+        cpu.op_addr = Some(0x03);
+        test_rol(&mut cpu, &mut bus, 255, 0x81);
+        cpu.op_addr = Some(0x04);
+        test_rol(&mut cpu, &mut bus, 3, 0x00);
+    }
+
+    fn test_rol(cpu: &mut Cpu, bus: &mut Bus, expect: u8, flags: u8) {
+        assert!(!cpu.rol());
+        match cpu.op_addr {
+            Some(addr) => assert_eq!(
+                bus.read(addr),
+                expect,
+                "invalid addr {} => expected {} but was {}",
+                addr,
+                expect,
+                bus.read(addr)
+            ),
+            None => assert_eq!(
+                cpu.acc, expect,
+                "invalid accumulator => expected {} but was {}",
+                expect, cpu.acc
+            ),
+        }
+        assert_eq!(
+            cpu.flags, flags,
+            "invalid flags => expected {:#010b}, but was {:#010b}",
+            flags, cpu.flags
+        );
+    }
+
+    #[test]
+    fn ror() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.prg_cntr.0 = 0;
+        cpu.acc = 123;
+        cpu.op_addr = Some(0x0001);
+
+        bus.write(0x01, 56);
+        bus.write(0x02, 156);
+        bus.write(0x03, 255);
+        bus.write(0x04, 37);
+
+        cpu.op_addr = None;
+        test_ror(&mut cpu, &mut bus, 61, 0x01);
+        cpu.op_addr = Some(0x00);
+        test_ror(&mut cpu, &mut bus, 128, 0x80);
+        cpu.op_addr = Some(0x01);
+        test_ror(&mut cpu, &mut bus, 28, 0x00);
+        cpu.op_addr = Some(0x02);
+        test_ror(&mut cpu, &mut bus, 78, 0x00);
+        cpu.op_addr = Some(0x03);
+        test_ror(&mut cpu, &mut bus, 127, 0x01);
+        cpu.op_addr = Some(0x04);
+        test_ror(&mut cpu, &mut bus, 146, 0x81);
+    }
+
+    fn test_ror(cpu: &mut Cpu, bus: &mut Bus, expect: u8, flags: u8) {
+        assert!(!cpu.ror());
+        match cpu.op_addr {
+            Some(addr) => assert_eq!(
+                bus.read(addr),
+                expect,
+                "invalid addr {} => expected {} but was {}",
+                addr,
+                expect,
+                bus.read(addr)
+            ),
+            None => assert_eq!(
+                cpu.acc, expect,
+                "invalid accumulator => expected {} but was {}",
+                expect, cpu.acc
+            ),
+        }
+        assert_eq!(
+            cpu.flags, flags,
+            "invalid flags => expected {:#010b}, but was {:#010b}",
+            flags, cpu.flags
+        );
+    }
+
+    #[test]
+    fn bit() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.prg_cntr.0 = 0;
+        cpu.acc = 0b01101001;
+
+
+        cpu.op_addr = Some(0x00);
+        bus.write(0x00, 0b10010110);
+        test_bit(&mut cpu, 0x82);
+
+        cpu.op_addr = Some(0x01);
+        bus.write(0x01, 0b00110111);
+        test_bit(&mut cpu, 0x00);
+
+        cpu.op_addr = Some(0x02);
+        bus.write(0x02, 0b11010000);
+        test_bit(&mut cpu, 0xC0);
+    }
+
+    fn test_bit(cpu: &mut Cpu, flags: u8) {
+        assert!(!cpu.bit());
+        assert_eq!(
+            cpu.flags, flags,
+            "invalid flags => expected {:#010b}, but was {:#010b}",
+            flags, cpu.flags
+        );
+    }
+
+    #[test]
+    fn brk() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.flags = 0x82;
+        cpu.prg_cntr.0 = 0x1234;
+        bus.write(0xFFFE, 0x56);
+        bus.write(0xFFFF, 0x78);
+
+        assert!(!cpu.brk());
+        assert_eq!(bus.read(0x01FF), 0x12);
+        assert_eq!(bus.read(0x01FE), 0x34);
+        assert_eq!(bus.read(0x01FD), 0x82 | 0x04 | 0x10);
+        assert_eq!(cpu.prg_cntr.0, 0x7856);
+        assert_eq!(
+            cpu.flags,
+            0x82 | 0x04,
+            "invalid flags => expected {:#010b}, but was {:#010b}",
+            0x40,
+            cpu.flags
+        );
+    }
+
+    #[test]
+    fn clc() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.flags = 0xFF;
+        cpu.clc();
+        assert_eq!(cpu.flags, 0xFE);
+    }
+
+    #[test]
+    fn cld() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.flags = 0xFF;
+        cpu.cld();
+        assert_eq!(cpu.flags, 0xF7);
+    }
+
+    #[test]
+    fn cli() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.flags = 0xFF;
+        cpu.cli();
+        assert_eq!(cpu.flags, 0xFB);
+    }
+
+    #[test]
+    fn clv() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.flags = 0xFF;
+        cpu.clv();
+        assert_eq!(cpu.flags, 0xBF);
+    }
+
+    #[test]
+    fn cmp() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.acc = 0x56;
+        cpu.op_addr = Some(0x12);
+        bus.write(0x12, 0x34);
+        assert!(cpu.cmp());
+        assert_eq!(cpu.flags, 0x01);
+
+        cpu.acc = 0x01;
+        cpu.op_addr = Some(0x13);
+        bus.write(0x13, 0x34);
+        assert!(cpu.cmp());
+        assert_eq!(cpu.flags, 0x80);
+
+        cpu.acc = 0x01;
+        cpu.op_addr = Some(0x14);
+        bus.write(0x14, 0x01);
+        assert!(cpu.cmp());
+        assert_eq!(cpu.flags, 0x03);
+    }
+
+    #[test]
+    fn cpx() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.x = 0x56;
+        cpu.op_addr = Some(0x12);
+        bus.write(0x12, 0x34);
+        assert!(cpu.cpx());
+        assert_eq!(cpu.flags, 0x01);
+
+        cpu.x = 0x01;
+        cpu.op_addr = Some(0x13);
+        bus.write(0x13, 0x34);
+        assert!(cpu.cpx());
+        assert_eq!(cpu.flags, 0x80);
+
+        cpu.x = 0x01;
+        cpu.op_addr = Some(0x14);
+        bus.write(0x14, 0x01);
+        assert!(cpu.cpx());
+        assert_eq!(cpu.flags, 0x03);
+    }
+
+    #[test]
+    fn cpy() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.y = 0x56;
+        cpu.op_addr = Some(0x12);
+        bus.write(0x12, 0x34);
+        assert!(cpu.cpy());
+        assert_eq!(cpu.flags, 0x01);
+
+        cpu.y = 0x01;
+        cpu.op_addr = Some(0x13);
+        bus.write(0x13, 0x34);
+        assert!(cpu.cpy());
+        assert_eq!(cpu.flags, 0x80);
+
+        cpu.y = 0x01;
+        cpu.op_addr = Some(0x14);
+        bus.write(0x14, 0x01);
+        assert!(cpu.cpy());
+        assert_eq!(cpu.flags, 0x03);
+    }
+
+    #[test]
+    fn dec() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x12);
+        bus.write(0x12, 0x34);
+        assert!(!cpu.dec());
+        assert_eq!(cpu.flags, 0x00);
+        assert_eq!(bus.read(0x12), 0x33);
+
+        cpu.op_addr = Some(0x13);
+        bus.write(0x13, 0x84);
+        assert!(!cpu.dec());
+        assert_eq!(cpu.flags, 0x80);
+        assert_eq!(bus.read(0x13), 0x83);
+
+        cpu.op_addr = Some(0x14);
+        bus.write(0x14, 0x01);
+        assert!(!cpu.dec());
+        assert_eq!(cpu.flags, 0x02);
+        assert_eq!(bus.read(0x14), 0x00);
+    }
+
+    #[test]
+    fn dex() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.x = 0x34;
+        assert!(!cpu.dex());
+        assert_eq!(cpu.flags, 0x00);
+        assert_eq!(cpu.x, 0x33);
+
+        cpu.x = 0x84;
+        assert!(!cpu.dex());
+        assert_eq!(cpu.flags, 0x80);
+        assert_eq!(cpu.x, 0x83);
+
+        cpu.x = 0x01;
+        assert!(!cpu.dex());
+        assert_eq!(cpu.flags, 0x02);
+        assert_eq!(cpu.x, 0x00);
+    }
+
+    #[test]
+    fn dey() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.y = 0x34;
+        assert!(!cpu.dey());
+        assert_eq!(cpu.flags, 0x00);
+        assert_eq!(cpu.y, 0x33);
+
+        cpu.y = 0x84;
+        assert!(!cpu.dey());
+        assert_eq!(cpu.flags, 0x80);
+        assert_eq!(cpu.y, 0x83);
+
+        cpu.y = 0x01;
+        assert!(!cpu.dey());
+        assert_eq!(cpu.flags, 0x02);
+        assert_eq!(cpu.y, 0x00);
+    }
+
+    #[test]
+    fn eor() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x12);
+        cpu.acc = 0b11101110;
+        bus.write(0x12, 0b01101010);
+        assert!(cpu.eor());
+        assert_eq!(cpu.acc, 0b10000100);
+        assert_eq!(cpu.flags, 0x80);
+
+        cpu.op_addr = Some(0x12);
+        cpu.acc = 0b11110011;
+        bus.write(0x12, 0b11110011);
+        assert!(cpu.eor());
+        assert_eq!(cpu.acc, 0b0);
+        assert_eq!(cpu.flags, 0x02);
+
+        cpu.op_addr = Some(0x12);
+        cpu.acc = 0b11110000;
+        bus.write(0x12, 0b11110011);
+        assert!(cpu.eor());
+        assert_eq!(cpu.acc, 0b11);
+        assert_eq!(cpu.flags, 0x00);
+    }
+
+    #[test]
+    fn inc() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x12);
+        bus.write(0x12, 0x34);
+        assert!(!cpu.inc());
+        assert_eq!(cpu.flags, 0x00);
+        assert_eq!(bus.read(0x12), 0x35);
+
+        cpu.op_addr = Some(0x13);
+        bus.write(0x13, 0x84);
+        assert!(!cpu.inc());
+        assert_eq!(cpu.flags, 0x80);
+        assert_eq!(bus.read(0x13), 0x85);
+
+        cpu.op_addr = Some(0x14);
+        bus.write(0x14, 0xFF);
+        assert!(!cpu.inc());
+        assert_eq!(cpu.flags, 0x02);
+        assert_eq!(bus.read(0x14), 0x00);
+    }
+
+    #[test]
+    fn inx() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.x = 0x34;
+        assert!(!cpu.inx());
+        assert_eq!(cpu.flags, 0x00);
+        assert_eq!(cpu.x, 0x35);
+
+        cpu.x = 0x84;
+        assert!(!cpu.inx());
+        assert_eq!(cpu.flags, 0x80);
+        assert_eq!(cpu.x, 0x85);
+
+        cpu.x = 0xFF;
+        assert!(!cpu.inx());
+        assert_eq!(cpu.flags, 0x02);
+        assert_eq!(cpu.x, 0x00);
+    }
+
+    #[test]
+    fn iny() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.y = 0x34;
+        assert!(!cpu.iny());
+        assert_eq!(cpu.flags, 0x00);
+        assert_eq!(cpu.y, 0x35);
+
+        cpu.y = 0x84;
+        assert!(!cpu.iny());
+        assert_eq!(cpu.flags, 0x80);
+        assert_eq!(cpu.y, 0x85);
+
+        cpu.y = 0xFF;
+        assert!(!cpu.iny());
+        assert_eq!(cpu.flags, 0x02);
+        assert_eq!(cpu.y, 0x00);
+    }
+
+    #[test]
+    fn jmp() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x1234);
+        assert!(!cpu.jmp());
+        assert_eq!(cpu.prg_cntr.0, 0x1234);
+    }
+
+    #[test]
+    fn jsr() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x1234);
+        cpu.prg_cntr.0 = 0x5678; 
+        cpu.stk_ptr = 0xFF; 
+
+        assert!(!cpu.jsr());
+
+        assert_eq!(bus.read(0x01FF), 0x56);
+        assert_eq!(bus.read(0x01FE), 0x78);
+        assert_eq!(cpu.prg_cntr.0, 0x1234);
+       
+    }
+
+    #[test]
+    fn lda() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x1234);
+        bus.write(0x1234, 0x56);
+
+        assert!(cpu.lda());
+        assert_eq!(cpu.acc, 0x56);
+    }
+
+    #[test]
+    fn ldx() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x1234);
+        bus.write(0x1234, 0x56);
+
+        assert!(cpu.ldx());
+        assert_eq!(cpu.x, 0x56);
+    }
+
+    #[test]
+    fn ldy() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.op_addr = Some(0x1234);
+        bus.write(0x1234, 0x56);
+
+        assert!(cpu.ldy());
+        assert_eq!(cpu.y, 0x56);
+    }
+
+    #[test]
+    fn pha() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.acc = 0x12;
+        assert!(!cpu.pha());
+        assert_eq!(bus.read(0x01FF), 0x12);
+
+        cpu.acc = 0x34;
+        assert!(!cpu.pha());
+        assert_eq!(bus.read(0x01FE), 0x34);
+    }
+
+    #[test]
+    fn php() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.flags = 0x12;
+        assert!(!cpu.php());
+        assert_eq!(bus.read(0x01FF), 0x12);
+
+        cpu.flags = 0x34;
+        assert!(!cpu.php());
+        assert_eq!(bus.read(0x01FE), 0x34);
+    }
+
+    #[test]
+    fn pla() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.stk_push(0x12);
+        cpu.stk_push(0x23);
+
+        assert!(!cpu.pla());
+        assert_eq!(cpu.acc, 0x23);
+        assert!(!cpu.pla());
+        assert_eq!(cpu.acc, 0x12);
+    }
+
+    #[test]
+    fn plp() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.stk_push(0x12);
+        cpu.stk_push(0x23);
+
+        assert!(!cpu.plp());
+        assert_eq!(cpu.flags, 0x23);
+        assert!(!cpu.plp());
+        assert_eq!(cpu.flags, 0x12);
+    }
+
+
+    #[test]
+    fn rti() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.stk_push(0x12);
+        cpu.stk_push(0x34);
+        cpu.stk_push(0x56);
+
+        assert!(!cpu.rti());
+        assert_eq!(cpu.flags, 0x56 & 0xEF & 0xFB);
+        assert_eq!(cpu.prg_cntr.0, 0x1234);
+    }
+
+    #[test]
+    fn rts() {
+        let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        bus.write(0x01FF, 0x34);
+        bus.write(0x01FE, 0x65);
+        cpu.prg_cntr.0 = 0x1234;
+        cpu.stk_ptr = 0xFD;
+
+        assert!(!cpu.rts());
+        assert_eq!(cpu.prg_cntr.0, 0x3466);
+    }
+
+    #[test]
+    fn sec() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.get_flag(Flag::Carry));
+        assert!(!cpu.sec());
+        assert!(cpu.get_flag(Flag::Carry));
+    }
+
+    #[test]
+    fn sed() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.get_flag(Flag::DecimalMode));
+        assert!(!cpu.sed());
+        assert!(cpu.get_flag(Flag::DecimalMode));
+    }
+
+    #[test]
+    fn sei() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.get_flag(Flag::NoInterupts));
+        assert!(!cpu.sei());
+        assert!(cpu.get_flag(Flag::NoInterupts));
+    }
+
+    #[test]
+    fn sta() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.acc = 0x12;
+        cpu.op_addr = Some(0x3456);
+
+        assert!(!cpu.sta());
+        assert_eq!(bus.read(0x3456), 0x12);
+    }
+
+    #[test]
+    fn stx() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.x = 0x12;
+        cpu.op_addr = Some(0x3456);
+
+        assert!(!cpu.stx());
+        assert_eq!(bus.read(0x3456), 0x12);
+    }
+
+    #[test]
+    fn sty() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.y = 0x12;
+        cpu.op_addr = Some(0x3456);
+
+        assert!(!cpu.sty());
+        assert_eq!(bus.read(0x3456), 0x12);
+    }
+
+    #[test]
+    fn tax() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.tax());
+        assert_eq!(cpu.x, 0x00);
+        assert_eq!(cpu.flags, 0x02);
+
+        cpu.acc = 0x23;
+        assert!(!cpu.tax());
+        assert_eq!(cpu.x, 0x23);
+        assert_eq!(cpu.flags, 0x00);
+
+        cpu.acc = 0xB2;
+        assert!(!cpu.tax());
+        assert_eq!(cpu.x, 0xB2);
+        assert_eq!(cpu.flags, 0x80);
+    }
+
+    #[test]
+    fn tay() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.tay());
+        assert_eq!(cpu.y, 0x00);
+        assert_eq!(cpu.flags, 0x02);
+
+        cpu.acc = 0x23;
+        assert!(!cpu.tay());
+        assert_eq!(cpu.y, 0x23);
+        assert_eq!(cpu.flags, 0x00);
+
+        cpu.acc = 0xB2;
+        assert!(!cpu.tay());
+        assert_eq!(cpu.y, 0xB2);
+        assert_eq!(cpu.flags, 0x80);
+    }
+
+    #[test]
+    fn tsx() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        cpu.stk_ptr = 0x00;
+        assert!(!cpu.tsx());
+        assert_eq!(cpu.x, 0x00);
+        assert_eq!(cpu.flags, 0x02);
+
+        cpu.stk_ptr = 0x23;
+        assert!(!cpu.tsx());
+        assert_eq!(cpu.x, 0x23);
+        assert_eq!(cpu.flags, 0x00);
+
+        cpu.stk_ptr = 0xB2;
+        assert!(!cpu.tsx());
+        assert_eq!(cpu.x, 0xB2);
+        assert_eq!(cpu.flags, 0x80);
+    }
+
+    #[test]
+    fn txa() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.txa());
+        assert_eq!(cpu.acc, 0x00);
+        assert_eq!(cpu.flags, 0x02);
+
+        cpu.x = 0x23;
+        assert!(!cpu.txa());
+        assert_eq!(cpu.acc, 0x23);
+        assert_eq!(cpu.flags, 0x00);
+
+        cpu.x = 0xB2;
+        assert!(!cpu.txa());
+        assert_eq!(cpu.acc, 0xB2);
+        assert_eq!(cpu.flags, 0x80);
+    }
+
+    #[test]
+    fn txs() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.txs());
+        assert_eq!(cpu.stk_ptr, 0x00);
+        assert_eq!(cpu.flags, 0x02);
+
+        cpu.x = 0x23;
+        assert!(!cpu.txs());
+        assert_eq!(cpu.stk_ptr, 0x23);
+        assert_eq!(cpu.flags, 0x00);
+
+        cpu.x = 0xB2;
+        assert!(!cpu.txs());
+        assert_eq!(cpu.stk_ptr, 0xB2);
+        assert_eq!(cpu.flags, 0x80);
+    }
+
+    #[test]
+    fn tya() {
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+
+        assert!(!cpu.tya());
+        assert_eq!(cpu.acc, 0x00);
+        assert_eq!(cpu.flags, 0x02);
+
+        cpu.y = 0x23;
+        assert!(!cpu.tya());
+        assert_eq!(cpu.acc, 0x23);
+        assert_eq!(cpu.flags, 0x00);
+
+        cpu.y = 0xB2;
+        assert!(!cpu.tya());
+        assert_eq!(cpu.acc, 0xB2);
+        assert_eq!(cpu.flags, 0x80);
     }
 }

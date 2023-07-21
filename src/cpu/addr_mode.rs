@@ -1,9 +1,7 @@
-use crate::bus::Bus;
-
 use super::Cpu;
 
 impl Cpu {
-    pub fn addr_mode(&mut self, opcode: u8, bus: &Bus) -> bool {
+    pub fn addr_mode(&mut self, opcode: u8) -> bool {
         match opcode {
             0x00..=0xFF => unimplemented!(),
         }
@@ -28,8 +26,8 @@ impl Cpu {
     }
 
     #[inline]
-    fn rel(&mut self, bus: &Bus) -> bool {
-        let addr = bus.read(self.prg_cntr.adv());
+    fn rel(&mut self) -> bool {
+        let addr = self.bus.read(self.prg_cntr.adv());
         // if the number is negative, i.e. it has its 7th bit set,
         // then we 'or' it with 0xFF00 so that the math checks out later
         if addr & 0x80 != 0x00 {
@@ -43,17 +41,17 @@ impl Cpu {
     // absolute addressing mode
 
     #[inline]
-    fn abs(&mut self, bus: &Bus) -> bool {
+    fn abs(&mut self) -> bool {
         self.op_addr = Some(
-            (bus.read(self.prg_cntr.adv()) as u16) | (bus.read(self.prg_cntr.adv()) as u16) << 8,
+            (self.bus.read(self.prg_cntr.adv()) as u16) | (self.bus.read(self.prg_cntr.adv()) as u16) << 8,
         );
         false
     }
 
     #[inline]
-    fn abx(&mut self, bus: &Bus) -> bool {
+    fn abx(&mut self) -> bool {
         let addr =
-            (bus.read(self.prg_cntr.adv()) as u16) | (bus.read(self.prg_cntr.adv()) as u16) << 8;
+            (self.bus.read(self.prg_cntr.adv()) as u16) | (self.bus.read(self.prg_cntr.adv()) as u16) << 8;
 
         self.op_addr = Some(addr.wrapping_add(self.x as u16));
         if unsafe { self.op_addr.unwrap_unchecked() & 0xFF00 != addr & 0xFF00 } {
@@ -64,9 +62,9 @@ impl Cpu {
     }
 
     #[inline]
-    fn aby(&mut self, bus: &Bus) -> bool {
+    fn aby(&mut self) -> bool {
         let addr =
-            (bus.read(self.prg_cntr.adv()) as u16) | (bus.read(self.prg_cntr.adv()) as u16) << 8;
+            (self.bus.read(self.prg_cntr.adv()) as u16) | (self.bus.read(self.prg_cntr.adv()) as u16) << 8;
 
         self.op_addr = Some(addr.wrapping_add(self.y as u16));
         if unsafe { self.op_addr.unwrap_unchecked() & 0xFF00 != addr & 0xFF00 } {
@@ -79,54 +77,54 @@ impl Cpu {
     // zero page addressing mode
 
     #[inline]
-    fn zp0(&mut self, bus: &Bus) -> bool {
-        self.op_addr = Some(bus.read(self.prg_cntr.adv()) as u16);
+    fn zp0(&mut self) -> bool {
+        self.op_addr = Some(self.bus.read(self.prg_cntr.adv()) as u16);
         false
     }
 
     #[inline]
-    fn zpx(&mut self, bus: &Bus) -> bool {
-        self.op_addr = Some(bus.read(self.prg_cntr.adv()).wrapping_add(self.x) as u16);
+    fn zpx(&mut self) -> bool {
+        self.op_addr = Some(self.bus.read(self.prg_cntr.adv()).wrapping_add(self.x) as u16);
         false
     }
 
     #[inline]
-    fn zpy(&mut self, bus: &Bus) -> bool {
-        self.op_addr = Some(bus.read(self.prg_cntr.adv()).wrapping_add(self.y) as u16);
+    fn zpy(&mut self) -> bool {
+        self.op_addr = Some(self.bus.read(self.prg_cntr.adv()).wrapping_add(self.y) as u16);
         false
     }
 
     // indirect addressing modes
 
     #[inline]
-    fn ind(&mut self, bus: &Bus) -> bool {
+    fn ind(&mut self) -> bool {
         let ptr =
-            (bus.read(self.prg_cntr.adv()) as u16) | (bus.read(self.prg_cntr.adv()) as u16) << 8;
+            (self.bus.read(self.prg_cntr.adv()) as u16) | (self.bus.read(self.prg_cntr.adv()) as u16) << 8;
         if ptr & 0x00FF == 0x00FF {
-            self.op_addr = Some((bus.read(ptr & 0xFF00) as u16) << 8 | bus.read(ptr + 0) as u16);
+            self.op_addr = Some((self.bus.read(ptr & 0xFF00) as u16) << 8 | self.bus.read(ptr + 0) as u16);
         } else {
-            self.op_addr = Some((bus.read(ptr + 1) as u16) << 8 | bus.read(ptr + 0) as u16);
+            self.op_addr = Some((self.bus.read(ptr + 1) as u16) << 8 | self.bus.read(ptr + 0) as u16);
         }
         false
     }
 
     #[inline]
-    fn idx(&mut self, bus: &Bus) -> bool {
+    fn idx(&mut self) -> bool {
         // get the bus value pointed at by the program counter
         // then, add the x register to that value
-        let addr = bus.read(self.prg_cntr.adv()).wrapping_add(self.x) as u16;
+        let addr = self.bus.read(self.prg_cntr.adv()).wrapping_add(self.x) as u16;
         // the above value is then used as the zero paged address of
         // the pointer address that we want to use
         self.op_addr =
-            Some((bus.read((addr + 1) & 0x00FF) as u16) << 8 | bus.read(addr & 0x00FF) as u16);
+            Some((self.bus.read((addr + 1) & 0x00FF) as u16) << 8 | self.bus.read(addr & 0x00FF) as u16);
         false
     }
 
     #[inline]
-    fn idy(&mut self, bus: &Bus) -> bool {
-        let addr = bus.read(self.prg_cntr.adv()) as u16;
+    fn idy(&mut self) -> bool {
+        let addr = self.bus.read(self.prg_cntr.adv()) as u16;
 
-        let ptr = (bus.read(addr) as u16) | (bus.read(addr + 1) as u16) << 8;
+        let ptr = (self.bus.read(addr) as u16) | (self.bus.read(addr + 1) as u16) << 8;
         println!("unaltered ptr : {}", ptr);
 
         self.op_addr = Some(ptr.wrapping_add(self.y as u16));
@@ -143,25 +141,28 @@ impl Cpu {
 mod tests {
 
     use super::*;
-    use crate::cpu::ProgramCounter;
+    use crate::{cpu::ProgramCounter, bus::Bus};
 
     #[test]
     fn acc() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         assert!(!cpu.acc());
         assert_eq!(cpu.op_addr, None);
     }
 
     #[test]
     fn imp() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         assert!(!cpu.imp());
         assert_eq!(cpu.op_addr, None);
     }
 
     #[test]
     fn imm() {
-        let mut cpu = Cpu::default();
+        let bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         assert!(!cpu.imm());
         assert_eq!(cpu.op_addr, Some(0x0));
         assert!(!cpu.imm());
@@ -170,28 +171,28 @@ mod tests {
 
     #[test]
     fn rel() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         bus.write(0x0, 0x34);
 
-        assert!(!cpu.rel(&bus));
+        assert!(!cpu.rel());
         assert_eq!(cpu.op_addr, Some(0x34));
 
         cpu.prg_cntr = ProgramCounter(0x34);
         bus.write(0x34, 0xFB);
 
-        assert!(!cpu.rel(&bus));
+        assert!(!cpu.rel());
         assert_eq!(cpu.op_addr, Some(0xFFFB));
     }
 
     #[test]
     fn abs() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         bus.write(0x0, 0x34);
         bus.write(0x1, 0x3A);
 
-        assert!(!cpu.abs(&bus));
+        assert!(!cpu.abs());
         assert_eq!(cpu.op_addr, Some(0x3A34));
         assert_eq!(cpu.prg_cntr.0, 0x02);
 
@@ -199,20 +200,20 @@ mod tests {
         bus.write(0x34, 0xFB);
         bus.write(0x35, 0x12);
 
-        assert!(!cpu.abs(&bus));
+        assert!(!cpu.abs());
         assert_eq!(cpu.op_addr, Some(0x12FB));
         assert_eq!(cpu.prg_cntr.0, 0x36);
     }
 
     #[test]
     fn abx() {
-        let mut cpu = Cpu::default();
-        cpu.x = 0x45;
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.x = 0x45;
         bus.write(0x0, 0x34);
         bus.write(0x1, 0x3A);
 
-        assert!(!cpu.abx(&bus));
+        assert!(!cpu.abx());
         assert_eq!(cpu.op_addr, Some(0x3A79));
         assert_eq!(cpu.prg_cntr.0, 0x2);
 
@@ -221,20 +222,20 @@ mod tests {
         bus.write(0x34, 0x0B);
         bus.write(0x35, 0xFF);
 
-        assert!(cpu.abx(&bus));
+        assert!(cpu.abx());
         assert_eq!(cpu.op_addr, Some(0x0007));
         assert_eq!(cpu.prg_cntr.0, 0x36);
     }
 
     #[test]
     fn aby() {
-        let mut cpu = Cpu::default();
-        cpu.y = 0x45;
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
+        cpu.y = 0x45;
         bus.write(0x0, 0x34);
         bus.write(0x1, 0x3A);
 
-        assert!(!cpu.aby(&bus));
+        assert!(!cpu.aby());
         assert_eq!(cpu.op_addr, Some(0x3A79));
         assert_eq!(cpu.prg_cntr.0, 0x2);
 
@@ -243,37 +244,37 @@ mod tests {
         bus.write(0x34, 0x0B);
         bus.write(0x35, 0xFF);
 
-        assert!(cpu.aby(&bus));
+        assert!(cpu.aby());
         assert_eq!(cpu.op_addr, Some(0x0007));
         assert_eq!(cpu.prg_cntr.0, 0x36);
     }
 
     #[test]
     fn zp0() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         bus.write(0x00, 0x35);
 
-        assert!(!cpu.zp0(&bus));
+        assert!(!cpu.zp0());
         assert_eq!(cpu.op_addr, Some(0x0035));
         assert_eq!(cpu.prg_cntr.0, 0x01);
 
         cpu.prg_cntr = ProgramCounter(0x56);
         bus.write(0x56, 0xEF);
 
-        assert!(!cpu.zp0(&bus));
+        assert!(!cpu.zp0());
         assert_eq!(cpu.op_addr, Some(0x00EF));
         assert_eq!(cpu.prg_cntr.0, 0x57);
     }
 
     #[test]
     fn zpx() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         cpu.x = 0xA1;
         bus.write(0x00, 0x35);
 
-        assert!(!cpu.zpx(&bus));
+        assert!(!cpu.zpx());
         assert_eq!(cpu.op_addr, Some(0x00D6));
         assert_eq!(cpu.prg_cntr.0, 0x01);
 
@@ -281,19 +282,19 @@ mod tests {
         cpu.x = 0x3D;
         bus.write(0x56, 0xEF);
 
-        assert!(!cpu.zpx(&bus));
+        assert!(!cpu.zpx());
         assert_eq!(cpu.op_addr, Some(0x002C));
         assert_eq!(cpu.prg_cntr.0, 0x57);
     }
 
     #[test]
     fn zpy() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         cpu.y = 0xA1;
         bus.write(0x00, 0x35);
 
-        assert!(!cpu.zpy(&bus));
+        assert!(!cpu.zpy());
         assert_eq!(cpu.op_addr, Some(0x00D6));
         assert_eq!(cpu.prg_cntr.0, 0x01);
 
@@ -301,21 +302,21 @@ mod tests {
         cpu.y = 0x3D;
         bus.write(0x56, 0xEF);
 
-        assert!(!cpu.zpy(&bus));
+        assert!(!cpu.zpy());
         assert_eq!(cpu.op_addr, Some(0x002C));
         assert_eq!(cpu.prg_cntr.0, 0x57);
     }
 
     #[test]
     fn ind() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         bus.write(0x00, 0x35);
         bus.write(0x01, 0xD6);
         bus.write(0xD635, 0x34);
         bus.write(0xD636, 0x12);
 
-        assert!(!cpu.ind(&bus));
+        assert!(!cpu.ind());
         assert_eq!(cpu.op_addr, Some(0x1234));
         assert_eq!(cpu.prg_cntr.0, 0x02);
 
@@ -325,7 +326,7 @@ mod tests {
         bus.write(0xFE12, 0x12);
         bus.write(0xFE13, 0xFE);
 
-        assert!(!cpu.ind(&bus));
+        assert!(!cpu.ind());
         assert_eq!(cpu.op_addr, Some(0xFE12));
         assert_eq!(cpu.prg_cntr.0, 0x58);
 
@@ -340,21 +341,21 @@ mod tests {
         bus.write(0xD6FF, 0x34);
         bus.write(0xD600, 0x12);
 
-        assert!(!cpu.ind(&bus));
+        assert!(!cpu.ind());
         assert_eq!(cpu.op_addr, Some(0x1234));
         assert_eq!(cpu.prg_cntr.0, 0x14);
     }
 
     #[test]
     fn idx() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         cpu.x = 0x1A;
         bus.write(0x00, 0x2B);
         bus.write(0x45, 0x34);
         bus.write(0x46, 0x12);
 
-        assert!(!cpu.idx(&bus));
+        assert!(!cpu.idx());
         assert_eq!(cpu.op_addr, Some(0x1234));
         assert_eq!(cpu.prg_cntr.0, 0x01);
 
@@ -364,21 +365,21 @@ mod tests {
         bus.write(0x0E, 0x34);
         bus.write(0x0F, 0x12);
 
-        assert!(!cpu.idx(&bus));
+        assert!(!cpu.idx());
         assert_eq!(cpu.op_addr, Some(0x1234));
         assert_eq!(cpu.prg_cntr.0, 0x13);
     }
 
     #[test]
     fn idy() {
-        let mut cpu = Cpu::default();
         let mut bus = Bus::default();
+        let mut cpu = Cpu::new(bus.clone());
         cpu.y = 0x1A;
         bus.write(0x00, 0x2B);
         bus.write(0x2B, 0x34);
         bus.write(0x2C, 0x12);
 
-        assert!(!cpu.idy(&bus));
+        assert!(!cpu.idy());
         assert_eq!(cpu.op_addr, Some(0x124E));
         assert_eq!(cpu.prg_cntr.0, 0x01);
 
@@ -388,7 +389,7 @@ mod tests {
         bus.write(0x64, 0x86);
         bus.write(0x65, 0x12);
 
-        assert!(cpu.idy(&bus));
+        assert!(cpu.idy());
         assert_eq!(cpu.op_addr, Some(0x133C));
         assert_eq!(cpu.prg_cntr.0, 0x13);
     }
