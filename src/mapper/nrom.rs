@@ -28,7 +28,7 @@ pub struct NRom256 {
     data: [u8; 0xA000],
 }
 
-impl BusDevice for NRom128 {
+impl BusDevice for NRom256 {
     fn addr_space(&self) -> usize {
         self.data.len()
     }
