@@ -1,6 +1,6 @@
 use super::{addr_mode::AddrMode, opcode::Operation};
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Instr(u8, AddrMode, Operation, usize);
 
 impl Instr {

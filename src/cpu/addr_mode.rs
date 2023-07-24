@@ -1,6 +1,6 @@
 use super::Cpu;
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum AddrMode {
     IMP,
     IMM,
@@ -20,6 +20,7 @@ pub enum AddrMode {
 
 impl Cpu {
     pub fn addr_mode(&mut self, addr: AddrMode) -> bool {
+        println!("using addressing mode {:?}", addr);
         match addr {
             AddrMode::IMP => self.imp(),
             AddrMode::IMM => self.imm(),

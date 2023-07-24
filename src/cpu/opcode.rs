@@ -1,7 +1,7 @@
 use super::{Cpu, Flag};
 
 #[rustfmt::skip]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum Operation {
     ADC,AND,ASL,BCC,BCS,BEQ,BIT,BMI,BNE,BPL,BRK,BVC,BVS,CLC,
     CLD,CLI,CLV,CMP,CPX,CPY,DEC,DEX,DEY,EOR,INC,INX,INY,JMP,
@@ -11,8 +11,9 @@ pub enum Operation {
 }
 
 impl Cpu {
-    pub fn operate(&mut self, instr: Operation) -> bool {
-        match instr {
+    pub fn operate(&mut self, operation: Operation) -> bool {
+        println!("executing operation {:?}", operation);
+        match operation {
             Operation::XXX => self.nop(),
             Operation::ADC => self.adc(),
             Operation::AND => self.and(),

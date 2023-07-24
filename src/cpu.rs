@@ -65,7 +65,10 @@ impl Cpu {
     }
 
     fn exec(&mut self, instruction: &Instr) -> bool {
-        self.addr_mode(instruction.addr_mode()) && self.operate(instruction.op())
+        println!("exec instr : {:?}", instruction);
+        let addr_result = self.addr_mode(instruction.addr_mode());
+        let op_result = self.operate(instruction.op());
+        addr_result && op_result
     }
 
     pub fn reset(&mut self) {}
@@ -136,5 +139,27 @@ mod tests {
 
         cpu.flags = 0b00110101;
         assert!(cpu.get_flag(Flag::Carry));
+    }
+
+    #[test]
+    fn tick() {
+        let mut bus = Bus::ram_only();
+        // LDA 0x12
+        bus.write(0x0000, 0xA9);
+        bus.write(0x0001, 0x12);
+        //ADC 0x34
+        bus.write(0x0002, 0x69);
+        bus.write(0x0003, 0x34);
+
+        let mut cpu = Cpu::new(bus);
+        cpu.tick(); 
+        assert_eq!(cpu.acc, 0x12);
+        assert_eq!(cpu.cycles, 1);
+        cpu.tick(); 
+        assert_eq!(cpu.acc, 0x12);
+        assert_eq!(cpu.cycles, 0);
+        cpu.tick(); 
+        assert_eq!(cpu.acc, 0x46);
+        assert_eq!(cpu.cycles, 1);
     }
 }
