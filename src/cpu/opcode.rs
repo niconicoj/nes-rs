@@ -594,14 +594,17 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests {
+    use mockall::predicate::eq;
+
     use crate::{
-        bus::Bus,
+        bus::CpuBus,
+        cartridge::{mapper::MockMapper, Cartridge},
         cpu::{Cpu, Flag},
     };
 
     #[test]
     fn and() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.op_addr = Some(0x01);
         cpu.acc = 0b0101_1100;
@@ -629,7 +632,7 @@ mod tests {
 
     #[test]
     fn adc() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.op_addr = Some(0x01);
         cpu.acc = 34;
@@ -661,7 +664,7 @@ mod tests {
 
     #[test]
     fn sbc() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.op_addr = Some(0x01);
         cpu.acc = 34;
@@ -695,7 +698,7 @@ mod tests {
 
     #[test]
     fn bcc() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -716,7 +719,7 @@ mod tests {
 
     #[test]
     fn bcs() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -737,7 +740,7 @@ mod tests {
 
     #[test]
     fn beq() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -758,7 +761,7 @@ mod tests {
 
     #[test]
     fn bne() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -779,7 +782,7 @@ mod tests {
 
     #[test]
     fn bmi() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -800,7 +803,7 @@ mod tests {
 
     #[test]
     fn bpl() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -821,7 +824,7 @@ mod tests {
 
     #[test]
     fn bvc() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -842,7 +845,7 @@ mod tests {
 
     #[test]
     fn bvs() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         let addr = 155;
         cpu.prg_cntr.0 = 0;
@@ -863,7 +866,7 @@ mod tests {
 
     #[test]
     fn asl() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.prg_cntr.0 = 0;
         cpu.acc = 123;
@@ -900,7 +903,7 @@ mod tests {
 
     #[test]
     fn lsr() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.prg_cntr.0 = 0;
         cpu.acc = 123;
@@ -937,7 +940,7 @@ mod tests {
 
     #[test]
     fn rol() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.prg_cntr.0 = 0;
         cpu.acc = 123;
@@ -988,7 +991,7 @@ mod tests {
 
     #[test]
     fn ror() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.prg_cntr.0 = 0;
         cpu.acc = 123;
@@ -1039,7 +1042,7 @@ mod tests {
 
     #[test]
     fn bit() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.prg_cntr.0 = 0;
         cpu.acc = 0b01101001;
@@ -1068,18 +1071,26 @@ mod tests {
 
     #[test]
     fn brk() {
-        let bus = Bus::ram_only();
+        let mut mapper_mock = MockMapper::new();
+
+        mapper_mock
+            .expect_prg_read()
+            .with(eq(0xFFFE))
+            .return_const(0x56);
+        mapper_mock
+            .expect_prg_read()
+            .with(eq(0xFFFF))
+            .return_const(0x78);
+
+        let cartridge = Cartridge::new(mapper_mock);
+        let mut bus = CpuBus::default();
+        bus.plug_cartridge(&cartridge);
         let mut cpu = Cpu::new(bus);
 
         cpu.flags = 0x82;
         cpu.prg_cntr.0 = 0x1234;
-        cpu.bus.write(0xFFFE, 0x56);
-        cpu.bus.write(0xFFFF, 0x78);
 
         assert!(!cpu.brk());
-        assert_eq!(cpu.bus.read(0x01FF), 0x12);
-        assert_eq!(cpu.bus.read(0x01FE), 0x34);
-        assert_eq!(cpu.bus.read(0x01FD), 0x82 | 0x04 | 0x10);
         assert_eq!(cpu.prg_cntr.0, 0x7856);
         assert_eq!(
             cpu.flags,
@@ -1092,7 +1103,7 @@ mod tests {
 
     #[test]
     fn clc() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.flags = 0xFF;
         cpu.clc();
@@ -1101,7 +1112,7 @@ mod tests {
 
     #[test]
     fn cld() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.flags = 0xFF;
         cpu.cld();
@@ -1110,7 +1121,7 @@ mod tests {
 
     #[test]
     fn cli() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.flags = 0xFF;
         cpu.cli();
@@ -1119,7 +1130,7 @@ mod tests {
 
     #[test]
     fn clv() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.flags = 0xFF;
         cpu.clv();
@@ -1128,7 +1139,7 @@ mod tests {
 
     #[test]
     fn cmp() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.acc = 0x56;
@@ -1152,7 +1163,7 @@ mod tests {
 
     #[test]
     fn cpx() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.x = 0x56;
@@ -1176,7 +1187,7 @@ mod tests {
 
     #[test]
     fn cpy() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.y = 0x56;
@@ -1200,7 +1211,7 @@ mod tests {
 
     #[test]
     fn dec() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x12);
@@ -1224,7 +1235,7 @@ mod tests {
 
     #[test]
     fn dex() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.x = 0x34;
@@ -1245,7 +1256,7 @@ mod tests {
 
     #[test]
     fn dey() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.y = 0x34;
@@ -1266,7 +1277,7 @@ mod tests {
 
     #[test]
     fn eor() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x12);
@@ -1293,7 +1304,7 @@ mod tests {
 
     #[test]
     fn inc() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x12);
@@ -1317,7 +1328,7 @@ mod tests {
 
     #[test]
     fn inx() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.x = 0x34;
@@ -1338,7 +1349,7 @@ mod tests {
 
     #[test]
     fn iny() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.y = 0x34;
@@ -1359,7 +1370,7 @@ mod tests {
 
     #[test]
     fn jmp() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x1234);
@@ -1369,7 +1380,7 @@ mod tests {
 
     #[test]
     fn jsr() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x1234);
@@ -1385,7 +1396,7 @@ mod tests {
 
     #[test]
     fn lda() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x1234);
@@ -1397,7 +1408,7 @@ mod tests {
 
     #[test]
     fn ldx() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x1234);
@@ -1409,7 +1420,7 @@ mod tests {
 
     #[test]
     fn ldy() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.op_addr = Some(0x1234);
@@ -1421,7 +1432,7 @@ mod tests {
 
     #[test]
     fn pha() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.acc = 0x12;
@@ -1435,7 +1446,7 @@ mod tests {
 
     #[test]
     fn php() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.flags = 0x12;
@@ -1449,7 +1460,7 @@ mod tests {
 
     #[test]
     fn pla() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.stk_push(0x12);
@@ -1463,7 +1474,7 @@ mod tests {
 
     #[test]
     fn plp() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.stk_push(0x12);
@@ -1477,7 +1488,7 @@ mod tests {
 
     #[test]
     fn rti() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.stk_push(0x12);
@@ -1491,7 +1502,7 @@ mod tests {
 
     #[test]
     fn rts() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.bus.write(0x01FF, 0x34);
@@ -1505,7 +1516,7 @@ mod tests {
 
     #[test]
     fn sec() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.get_flag(Flag::Carry));
@@ -1515,7 +1526,7 @@ mod tests {
 
     #[test]
     fn sed() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.get_flag(Flag::DecimalMode));
@@ -1525,7 +1536,7 @@ mod tests {
 
     #[test]
     fn sei() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.get_flag(Flag::NoInterupts));
@@ -1535,40 +1546,66 @@ mod tests {
 
     #[test]
     fn sta() {
-        let bus = Bus::ram_only();
-        let mut cpu = Cpu::new(bus);
-        cpu.acc = 0x12;
-        cpu.op_addr = Some(0x3456);
+        let mut mapper_mock = MockMapper::new();
+        mapper_mock
+            .expect_prg_write()
+            .with(eq(0x6789), eq(0x12))
+            .times(1)
+            .return_const(());
 
+        let cartridge = Cartridge::new(mapper_mock);
+        let mut bus = CpuBus::default();
+        bus.plug_cartridge(&cartridge);
+        let mut cpu = Cpu::new(bus);
+
+        cpu.acc = 0x12;
+        cpu.op_addr = Some(0x6789);
         assert!(!cpu.sta());
-        assert_eq!(cpu.bus.read(0x3456), 0x12);
     }
 
     #[test]
     fn stx() {
-        let bus = Bus::ram_only();
+        let mut mapper_mock = MockMapper::new();
+        mapper_mock
+            .expect_prg_write()
+            .with(eq(0x6789), eq(0x12))
+            .times(1)
+            .return_const(());
+
+        let cartridge = Cartridge::new(mapper_mock);
+        let mut bus = CpuBus::default();
+        bus.plug_cartridge(&cartridge);
         let mut cpu = Cpu::new(bus);
+
         cpu.x = 0x12;
-        cpu.op_addr = Some(0x3456);
+        cpu.op_addr = Some(0x6789);
 
         assert!(!cpu.stx());
-        assert_eq!(cpu.bus.read(0x3456), 0x12);
     }
 
     #[test]
     fn sty() {
-        let bus = Bus::ram_only();
+        let mut mapper_mock = MockMapper::new();
+        mapper_mock
+            .expect_prg_write()
+            .with(eq(0x6789), eq(0x12))
+            .times(1)
+            .return_const(());
+
+        let cartridge = Cartridge::new(mapper_mock);
+        let mut bus = CpuBus::default();
+        bus.plug_cartridge(&cartridge);
         let mut cpu = Cpu::new(bus);
+
         cpu.y = 0x12;
-        cpu.op_addr = Some(0x3456);
+        cpu.op_addr = Some(0x6789);
 
         assert!(!cpu.sty());
-        assert_eq!(cpu.bus.read(0x3456), 0x12);
     }
 
     #[test]
     fn tax() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.tax());
@@ -1588,7 +1625,7 @@ mod tests {
 
     #[test]
     fn tay() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.tay());
@@ -1608,7 +1645,7 @@ mod tests {
 
     #[test]
     fn tsx() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.stk_ptr = 0x00;
@@ -1629,7 +1666,7 @@ mod tests {
 
     #[test]
     fn txa() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.txa());
@@ -1649,7 +1686,7 @@ mod tests {
 
     #[test]
     fn txs() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.txs());
@@ -1669,7 +1706,7 @@ mod tests {
 
     #[test]
     fn tya() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert!(!cpu.tya());

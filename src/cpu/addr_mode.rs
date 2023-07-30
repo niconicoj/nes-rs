@@ -177,11 +177,11 @@ impl Cpu {
 mod tests {
 
     use super::*;
-    use crate::{bus::Bus, cpu::ProgramCounter};
+    use crate::{bus::CpuBus, cpu::ProgramCounter};
 
     #[test]
     fn acc() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         assert!(!cpu.acc());
         assert_eq!(cpu.op_addr, None);
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn imp() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         assert!(!cpu.imp());
         assert_eq!(cpu.op_addr, None);
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn imm() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         assert!(!cpu.imm());
         assert_eq!(cpu.op_addr, Some(0x0));
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn rel() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.bus.write(0x0, 0x34);
 
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn abs() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.bus.write(0x0, 0x34);
         cpu.bus.write(0x1, 0x3A);
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn abx() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.x = 0x45;
         cpu.bus.write(0x0, 0x34);
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn aby() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.y = 0x45;
         cpu.bus.write(0x0, 0x34);
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn zp0() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.bus.write(0x00, 0x35);
 
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn zpx() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.x = 0xA1;
         cpu.bus.write(0x00, 0x35);
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn zpy() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.y = 0xA1;
         cpu.bus.write(0x00, 0x35);
@@ -345,12 +345,12 @@ mod tests {
 
     #[test]
     fn ind() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.bus.write(0x00, 0x35);
-        cpu.bus.write(0x01, 0xD6);
-        cpu.bus.write(0xD635, 0x34);
-        cpu.bus.write(0xD636, 0x12);
+        cpu.bus.write(0x01, 0x0A);
+        cpu.bus.write(0x0A35, 0x34);
+        cpu.bus.write(0x0A36, 0x12);
 
         assert!(!cpu.ind());
         assert_eq!(cpu.op_addr, Some(0x1234));
@@ -358,9 +358,9 @@ mod tests {
 
         cpu.prg_cntr = ProgramCounter(0x56);
         cpu.bus.write(0x56, 0x12);
-        cpu.bus.write(0x57, 0xFE);
-        cpu.bus.write(0xFE12, 0x12);
-        cpu.bus.write(0xFE13, 0xFE);
+        cpu.bus.write(0x57, 0x10);
+        cpu.bus.write(0x1012, 0x12);
+        cpu.bus.write(0x1013, 0xFE);
 
         assert!(!cpu.ind());
         assert_eq!(cpu.op_addr, Some(0xFE12));
@@ -373,9 +373,9 @@ mod tests {
 
         cpu.prg_cntr = ProgramCounter(0x12);
         cpu.bus.write(0x12, 0xFF);
-        cpu.bus.write(0x13, 0xD6);
-        cpu.bus.write(0xD6FF, 0x34);
-        cpu.bus.write(0xD600, 0x12);
+        cpu.bus.write(0x13, 0x12);
+        cpu.bus.write(0x12FF, 0x34);
+        cpu.bus.write(0x1200, 0x12);
 
         assert!(!cpu.ind());
         assert_eq!(cpu.op_addr, Some(0x1234));
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn idx() {
-        let mut bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.x = 0x1A;
         cpu.bus.write(0x00, 0x2B);
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn idy() {
-        let bus = Bus::ram_only();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
         cpu.y = 0x1A;
         cpu.bus.write(0x00, 0x2B);

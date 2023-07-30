@@ -1,4 +1,4 @@
-use crate::bus::Bus;
+use crate::{bus::CpuBus, cartridge::Cartridge};
 
 use self::instr::{Instr, INSTRUCTION_TABLE};
 
@@ -26,8 +26,9 @@ impl ProgramCounter {
     }
 }
 
-struct Cpu {
-    bus: Bus,
+#[derive(Default)]
+pub struct Cpu {
+    bus: CpuBus,
     acc: u8,
     x: u8,
     y: u8,
@@ -40,7 +41,7 @@ struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(bus: Bus) -> Self {
+    pub fn new(bus: CpuBus) -> Self {
         Self {
             bus,
             acc: 0,
@@ -52,6 +53,14 @@ impl Cpu {
             cycles: 0,
             op_addr: None,
         }
+    }
+
+    pub fn plug_cartridge(&mut self, cartridge: &Cartridge) {
+        self.bus.plug_cartridge(cartridge);
+    }
+
+    pub fn unplug_cartridge(&mut self) {
+        self.bus.unplug_cartridge();
     }
 
     pub fn tick(&mut self) {
@@ -102,13 +111,13 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests {
-    use crate::bus::Bus;
+    use crate::bus::CpuBus;
 
     use super::{Cpu, Flag};
 
     #[test]
     fn set_flag() {
-        let bus = Bus::default();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         assert_eq!(cpu.flags, 0b00000000);
@@ -128,7 +137,7 @@ mod tests {
 
     #[test]
     fn get_flag() {
-        let bus = Bus::default();
+        let bus = CpuBus::default();
         let mut cpu = Cpu::new(bus);
 
         cpu.flags = 0b00110110;
@@ -143,7 +152,7 @@ mod tests {
 
     #[test]
     fn tick() {
-        let mut bus = Bus::ram_only();
+        let mut bus = CpuBus::default();
         // LDA 0x12
         bus.write(0x0000, 0xA9);
         bus.write(0x0001, 0x12);
@@ -152,13 +161,13 @@ mod tests {
         bus.write(0x0003, 0x34);
 
         let mut cpu = Cpu::new(bus);
-        cpu.tick(); 
+        cpu.tick();
         assert_eq!(cpu.acc, 0x12);
         assert_eq!(cpu.cycles, 1);
-        cpu.tick(); 
+        cpu.tick();
         assert_eq!(cpu.acc, 0x12);
         assert_eq!(cpu.cycles, 0);
-        cpu.tick(); 
+        cpu.tick();
         assert_eq!(cpu.acc, 0x46);
         assert_eq!(cpu.cycles, 1);
     }

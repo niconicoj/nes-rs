@@ -4,7 +4,7 @@ use super::{addr_mode::AddrMode, opcode::Operation};
 pub struct Instr(u8, AddrMode, Operation, usize);
 
 impl Instr {
-    pub fn opcode(&self) -> u8 {
+    pub fn _opcode(&self) -> u8 {
         self.0
     }
     pub fn addr_mode(&self) -> AddrMode {
