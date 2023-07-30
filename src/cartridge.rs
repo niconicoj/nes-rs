@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, fs, rc::Rc};
 
 use self::mapper::Mapper;
 
@@ -15,9 +15,17 @@ impl Cartridge {
         }
     }
 
-    pub fn from_header(header: &CartridgeHeader) -> Self {
+    pub fn from_file(path: &str) -> Self {
         // TODO : handle error
-        let mapper = mapper::create_mapper_by_header(header).expect("failed to create mapper");
+        let bytes = fs::read(path).expect("failed to read rom file");
+
+        let header = CartridgeHeader::from_bytes(
+            &bytes[..16]
+                .try_into()
+                .expect("failed to access header content"),
+        )
+        .expect("failed to parse header content");
+        let mapper = mapper::create_mapper_by_header(&header).expect("failed to create mapper");
         Self { mapper }
     }
 
@@ -51,6 +59,7 @@ impl CartridgeConnector {
     }
 }
 
+#[derive(Debug)]
 pub enum HeaderError {
     ParseError,
 }
@@ -124,21 +133,21 @@ impl CartridgeHeader {
         }))
     }
 
-    fn parse_nes2(bytes: &[u8; 16]) -> Result<CartridgeHeader, HeaderError> {
+    fn parse_nes2(_bytes: &[u8; 16]) -> Result<CartridgeHeader, HeaderError> {
         unimplemented!("nes2.0 header parsing not implemented");
     }
 
     pub fn mapper_id(&self) -> u8 {
         match self {
             CartridgeHeader::INES(header) => header.mapper_id,
-            CartridgeHeader::NES20(header) => todo!(),
+            CartridgeHeader::NES20(_) => todo!(),
         }
     }
 
     pub fn prg_rom_size(&self) -> u8 {
         match self {
             CartridgeHeader::INES(header) => header.prg_rom_size,
-            CartridgeHeader::NES20(header) => todo!(),
+            CartridgeHeader::NES20(_) => todo!(),
         }
     }
 }

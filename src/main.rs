@@ -1,4 +1,4 @@
-use crate::cartridge::{mapper::nrom, Cartridge};
+use crate::cartridge::Cartridge;
 
 mod bus;
 mod cartridge;
@@ -13,12 +13,11 @@ fn main() {
 
     let mut nes = nes::Nes::default();
 
-    let mapper = nrom::NRom128::default();
-    let cartridge = Cartridge::new(mapper);
+    let cartridge = Cartridge::from_file("roms/test.rom");
 
     nes.plug_cartridge(&cartridge);
 
-    nes.tick();
+    nes.step();
 
     println!("Hello, world!");
 }

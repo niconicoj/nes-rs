@@ -9,17 +9,13 @@ use crate::{
 #[derive(Default)]
 pub struct CpuBus {
     wram: Ram<0x800>,
-    ppu: Ppu,
+    pub(crate) ppu: Ppu,
     cartridge: Option<CartridgeConnector>,
 }
 
 impl CpuBus {
     pub fn plug_cartridge(&mut self, cartridge: &Cartridge) {
         self.cartridge = Some(cartridge.get_cpu_connector());
-    }
-
-    pub fn unplug_cartridge(&mut self) {
-        self.cartridge = None;
     }
 
     pub fn read(&self, addr: u16) -> u8 {

@@ -1,3 +1,5 @@
+use tracing::debug;
+
 use crate::{bus::CpuBus, cartridge::Cartridge};
 
 use self::instr::{Instr, INSTRUCTION_TABLE};
@@ -35,6 +37,8 @@ pub struct Cpu {
     stk_ptr: u8,
     prg_cntr: ProgramCounter,
     flags: u8,
+
+    system_clock: usize,
     cycles: usize,
 
     op_addr: Option<u16>,
@@ -50,6 +54,7 @@ impl Cpu {
             stk_ptr: 0xFF,
             prg_cntr: ProgramCounter(0),
             flags: 0,
+            system_clock: 0,
             cycles: 0,
             op_addr: None,
         }
@@ -59,22 +64,24 @@ impl Cpu {
         self.bus.plug_cartridge(cartridge);
     }
 
-    pub fn unplug_cartridge(&mut self) {
-        self.bus.unplug_cartridge();
-    }
-
     pub fn tick(&mut self) {
-        if self.cycles == 0 {
-            let opcode = self.bus.read(self.prg_cntr.adv());
-            let instruction = INSTRUCTION_TABLE[opcode as usize];
-            let add_cycle = self.exec(&instruction);
-            self.cycles += (add_cycle as usize) + instruction.cycles();
+        self.bus.ppu.tick();
+        println!("system clock : {}", self.system_clock);
+        if self.system_clock % 3 == 0 {
+            println!("executing cpu cycle");
+            if self.cycles == 0 {
+                let opcode = self.bus.read(self.prg_cntr.adv());
+                let instruction = INSTRUCTION_TABLE[opcode as usize];
+                let add_cycle = self.exec(&instruction);
+                self.cycles += (add_cycle as usize) + instruction.cycles();
+            }
+            self.cycles -= 1;
         }
-        self.cycles -= 1;
+        self.system_clock += 1;
     }
 
     fn exec(&mut self, instruction: &Instr) -> bool {
-        println!("exec instr : {:?}", instruction);
+        debug!("instr => {:?}", instruction);
         let addr_result = self.addr_mode(instruction.addr_mode());
         let op_result = self.operate(instruction.op());
         addr_result && op_result
@@ -165,8 +172,12 @@ mod tests {
         assert_eq!(cpu.acc, 0x12);
         assert_eq!(cpu.cycles, 1);
         cpu.tick();
+        cpu.tick();
+        cpu.tick();
         assert_eq!(cpu.acc, 0x12);
         assert_eq!(cpu.cycles, 0);
+        cpu.tick();
+        cpu.tick();
         cpu.tick();
         assert_eq!(cpu.acc, 0x46);
         assert_eq!(cpu.cycles, 1);
