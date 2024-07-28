@@ -2,10 +2,7 @@ use std::fmt::UpperHex;
 
 use crate::cpu_bus::CpuBusQuery;
 use addr_mode::AddrMode;
-use bevy::{
-    ecs::query::QueryData, input::common_conditions::input_toggle_active, prelude::*,
-    utils::HashSet,
-};
+use bevy::{ecs::query::QueryData, prelude::*, utils::HashSet};
 use bevy_egui::{
     egui::{self, Color32, RichText, ScrollArea},
     EguiContexts,
@@ -51,6 +48,12 @@ bitfield! {
     negative, set_negative: 7;
 }
 
+impl Default for CpuStatus {
+    fn default() -> Self {
+        Self(0b0010_0100)
+    }
+}
+
 #[derive(Component)]
 pub struct Cpu {
     a: u8,
@@ -59,14 +62,9 @@ pub struct Cpu {
     sp: u8,
     pc: u16,
     status: CpuStatus,
-    cycles: usize,
+    cycles: u8,
     open_bus: u8,
-}
-
-impl Default for CpuStatus {
-    fn default() -> Self {
-        Self(0b0010_0100)
-    }
+    addr_mode: AddrMode,
 }
 
 impl Default for Cpu {
@@ -80,11 +78,13 @@ impl Default for Cpu {
             cycles: 0,
             status: CpuStatus::default(),
             open_bus: 0x00,
+            addr_mode: AddrMode::_XXX,
         }
     }
 }
 
 impl Cpu {
+    /// increment the program counter and return its value before increment
     fn adv(&mut self) -> u16 {
         let pc = self.pc;
         self.pc = self.pc.wrapping_add(1);
@@ -106,7 +106,7 @@ impl Cpu {
 
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct CpuQuery {
+pub struct CpuQuery {
     cpu: &'static mut Cpu,
     bus: CpuBusQuery,
     clock: &'static mut SystemClock,
@@ -212,7 +212,6 @@ impl<'w> CpuQueryItem<'w> {
             self.tick();
         }
         if self.bus.nmi() {
-            debug!("nmi !");
             self.nmi();
         }
     }
@@ -260,10 +259,11 @@ impl<'w> CpuQueryItem<'w> {
         self.cpu.cycles += 8;
     }
 
-    fn execute(&mut self, instr: &Instr) -> usize {
-        let (addr, page_crossed) = self.addr_mode(instr.addr_mode());
+    fn execute(&mut self, instr: &Instr) -> u8 {
+        self.cpu.addr_mode = instr.addr_mode();
+        let (addr, page_crossed) = self.addr_mode();
         let page_sensitive = self.operate(instr.op(), addr);
-        (page_crossed && page_sensitive) as usize
+        (page_crossed && page_sensitive) as u8
     }
 
     fn bus_read(&mut self, addr: u16) -> u8 {
@@ -311,17 +311,11 @@ impl Plugin for CpuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BreakPointState>()
             .insert_resource(BreakPointState::default())
-            .add_systems(
-                Update,
-                (
-                    (cpu_info, cpu_disassembly).run_if(input_toggle_active(false, KeyCode::KeyI)),
-                    cpu_loop,
-                ),
-            );
+            .add_systems(Update, cpu_loop);
     }
 }
 
-fn cpu_info(mut query: Query<CpuQuery>, mut contexts: EguiContexts) {
+pub fn cpu_gui(mut query: Query<CpuQuery>, mut contexts: EguiContexts) {
     egui::Window::new("CPU Info").show(&contexts.ctx_mut(), |ui| {
         if let Ok(mut query) = query.get_single_mut() {
             ui.horizontal(|ui| {
@@ -397,7 +391,7 @@ fn cpu_info(mut query: Query<CpuQuery>, mut contexts: EguiContexts) {
     });
 }
 
-fn cpu_disassembly(
+pub fn disassembly_gui(
     query: Query<CpuQuery>,
     mut breakpoints: ResMut<BreakPointState>,
     mut contexts: EguiContexts,

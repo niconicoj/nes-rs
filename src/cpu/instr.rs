@@ -1,7 +1,7 @@
 use super::{addr_mode::AddrMode, op::Op};
 
 #[derive(Debug, Clone, Copy)]
-pub struct Instr(AddrMode, Op, usize);
+pub struct Instr(AddrMode, Op, u8);
 
 impl Instr {
     pub fn addr_mode(&self) -> AddrMode {
@@ -10,7 +10,7 @@ impl Instr {
     pub fn op(&self) -> Op {
         self.1
     }
-    pub fn cycles(&self) -> usize {
+    pub fn cycles(&self) -> u8 {
         self.2
     }
 }

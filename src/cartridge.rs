@@ -1,6 +1,7 @@
 use std::{fs::File, io::Read};
 
-use bevy::{input::common_conditions::input_toggle_active, prelude::*};
+use bevy::prelude::*;
+use bevy_egui::egui::{ScrollArea, Separator};
 use bevy_egui::{egui, EguiContexts};
 use mapper::{MappedAddr, Mapper};
 
@@ -153,13 +154,11 @@ impl Cartridge {
         let header = CartridgeHeader::from_bytes(&buffer)?;
         let mapper = Self::init_mapper(&header, &mut reader)?;
 
-        info!("loading {} banks of PRG memory", header.prg_rom_banks);
         let mut prg_banks = vec![Mem::default(); header.prg_rom_banks as usize];
         for bank in &mut prg_banks {
             reader.read_exact(bank.as_mut_slice())?;
         }
 
-        info!("loading {} banks of CHR memory", header.chr_rom_banks);
         let mut chr_banks = vec![Mem::default(); header.chr_rom_banks as usize];
         for bank in &mut chr_banks {
             reader.read_exact(bank.as_mut_slice())?;
@@ -192,35 +191,53 @@ impl Cartridge {
     }
 }
 
-pub struct CartridgePlugin;
-
-impl Plugin for CartridgePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            cartridge_ui.run_if(input_toggle_active(false, KeyCode::KeyI)),
-        );
-    }
-}
-
-pub fn cartridge_ui(
+pub fn cartridge_gui(
     mut commands: Commands,
     mut contexts: EguiContexts,
     query: Query<(Entity, Option<&Cartridge>, &NesMarker)>,
 ) {
     if let Ok((entity, maybe_cartridge, _)) = query.get_single() {
-        egui::Window::new("Cartridge").show(contexts.ctx_mut(), |ui| match maybe_cartridge {
-            Some(cartridge) => {
-                ui.label(format!("mapper {}", cartridge.header.mapper_id));
-            }
-            None => {
-                ui.label("No cartridge inserted");
-                if ui.button("Load test cartridge").clicked() {
-                    let cartridge = Cartridge::from_file("assets/nestest.nes")
-                        .expect("Failed to load cartridge");
-                    commands.entity(entity).insert(cartridge);
+        egui::Window::new("Cartridge")
+            .min_width(420.0)
+            .show(contexts.ctx_mut(), |ui| match maybe_cartridge {
+                Some(cartridge) => {
+                    ui.heading(format!("mapper {}", cartridge.header.mapper_id));
+                    ui.separator();
+                    ui.label("PRG banks");
+                    ui.monospace("         0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
+                    ui.add(Separator::default().spacing(2.0));
+                    let text_style = egui::TextStyle::Monospace;
+                    let row_height = ui.text_style_height(&text_style);
+                    let total_rows = 0x8000 / 16;
+                    ui.push_id("prg_memory", |ui| {
+                        ScrollArea::vertical()
+                            .auto_shrink(false)
+                            .max_height(200.0)
+                            .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                for row in row_range {
+                                    let start = (0x8000 + row * 16) as u16;
+                                    let end = start + 16;
+                                    let row_text = (start..end)
+                                        .map(|addr| {
+                                            cartridge
+                                                .cpu_read(addr)
+                                                .map_or("XX".to_string(), |v| format!("{:02X}", v))
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                    ui.monospace(format!("${:#06X}: {}", start, row_text));
+                                }
+                            });
+                    });
                 }
-            }
-        });
+                None => {
+                    ui.label("No cartridge inserted");
+                    if ui.button("Load test cartridge").clicked() {
+                        let cartridge = Cartridge::from_file("assets/nestest.nes")
+                            .expect("Failed to load cartridge");
+                        commands.entity(entity).insert(cartridge);
+                    }
+                }
+            });
     }
 }

@@ -111,7 +111,7 @@ impl<'w> CpuQueryItem<'w> {
     }
 
     pub fn sbc(&mut self, addr: Option<u16>) -> bool {
-        let fetched = !self.fetch(addr);
+        let fetched = self.fetch(addr) ^ 0xFF;
 
         let add_acc = self.cpu.a.overflowing_add(fetched);
         let result = add_acc.0.overflowing_add(self.cpu.status.0 & 0b1);
@@ -181,9 +181,9 @@ impl<'w> CpuQueryItem<'w> {
         self.stack_push(pc_bytes[0]);
         self.stack_push(pc_bytes[1]);
 
-        // self.cpu.status.set_b_flag(true);
+        self.cpu.status.set_b_flag(true);
         self.stack_push(self.cpu.status.0);
-        // self.cpu.status.set_b_flag(false);
+        self.cpu.status.set_b_flag(false);
 
         self.cpu.pc = (self.bus_read(0xFFFE) as u16) | (self.bus_read(0xFFFF) as u16) << 8;
         false
@@ -226,7 +226,7 @@ impl<'w> CpuQueryItem<'w> {
         let fetched = self.fetch(addr);
         let result = fetched >> 1;
 
-        self.cpu.status.set_carry(result > fetched);
+        self.cpu.status.set_carry((fetched & 0x01) != 0);
         self.cpu.status.set_zero(result == 0);
         self.cpu.status.set_negative(false);
 
@@ -860,7 +860,7 @@ mod tests {
         query.bus.cpu_write(0x03, 1);
 
         let addr: Option<u16> = None;
-        test_lsr(&mut query, 61, 0b0010_0100, addr);
+        test_lsr(&mut query, 61, 0b0010_0101, addr);
         let addr = Some(0x00);
         test_lsr(&mut query, 0, 0b0010_0110, addr);
         let addr = Some(0x01);
@@ -868,7 +868,7 @@ mod tests {
         let addr = Some(0x02);
         test_lsr(&mut query, 78, 0b0010_0100, addr);
         let addr = Some(0x03);
-        test_lsr(&mut query, 0, 0b0010_0110, addr);
+        test_lsr(&mut query, 0, 0b0010_0111, addr);
     }
 
     fn test_lsr(query: &mut CpuQueryItem, expect: u8, flags: u8, addr: Option<u16>) {

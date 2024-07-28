@@ -1,6 +1,6 @@
 use super::CpuQueryItem;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddrMode {
     IMP,
     IMM,
@@ -19,8 +19,8 @@ pub enum AddrMode {
 }
 
 impl<'w> CpuQueryItem<'w> {
-    pub fn addr_mode(&mut self, addr: AddrMode) -> (Option<u16>, bool) {
-        match addr {
+    pub fn addr_mode(&mut self) -> (Option<u16>, bool) {
+        match self.cpu.addr_mode {
             AddrMode::IMP => self.imp(),
             AddrMode::IMM => self.imm(),
             AddrMode::ACC => self.acc(),
@@ -53,13 +53,13 @@ impl<'w> CpuQueryItem<'w> {
     fn rel(&mut self) -> (Option<u16>, bool) {
         let addr = self.cpu.adv();
         let addr = self.bus_read(addr);
+        // if the number is negative, i.e. it has its 7th bit set,
+        // then we 'or' it with 0xFF00 so that the math checks out later
         let addr = if addr & 0x80 != 0x00 {
             (addr as u16) | 0xFF00
         } else {
             addr as u16
         };
-        // if the number is negative, i.e. it has its 7th bit set,
-        // then we 'or' it with 0xFF00 so that the math checks out later
         let page_crossed = (addr.wrapping_add(self.cpu.pc) & 0xFF00) != (self.cpu.pc & 0xFF00);
         (Some(addr), page_crossed)
     }
@@ -69,17 +69,19 @@ impl<'w> CpuQueryItem<'w> {
         let lsb = self.cpu.adv();
         let msb = self.cpu.adv();
         (
-            Some((self.bus_read(lsb) as u16) | (self.bus_read(msb) as u16) << 8),
+            Some((self.bus_read(lsb) as u16) | ((self.bus_read(msb) as u16) << 8)),
             false,
         )
     }
 
     fn abx(&mut self) -> (Option<u16>, bool) {
-        let lsb = self.cpu.adv();
-        let msb = self.cpu.adv();
-        let addr = (self.bus_read(lsb) as u16) | (self.bus_read(msb) as u16) << 8;
+        let lsb_addr = self.cpu.adv();
+        let msb_addr = self.cpu.adv();
+        let lsb = self.bus_read(lsb_addr) as u16;
+        let msb = self.bus_read(msb_addr) as u16;
+        let addr = lsb | (msb << 8);
         let abx_addr = addr.wrapping_add(self.cpu.x as u16);
-        if abx_addr & 0xFF00 != addr & 0xFF00 {
+        if abx_addr & 0xFF00 != (msb << 8) {
             (Some(abx_addr), true)
         } else {
             (Some(abx_addr), false)
@@ -125,15 +127,15 @@ impl<'w> CpuQueryItem<'w> {
     fn ind(&mut self) -> (Option<u16>, bool) {
         let lsb = self.cpu.adv();
         let msb = self.cpu.adv();
-        let ptr = (self.bus_read(lsb) as u16) | (self.bus_read(msb) as u16) << 8;
+        let ptr = (self.bus_read(lsb) as u16) | ((self.bus_read(msb) as u16) << 8);
         if ptr & 0x00FF == 0x00FF {
             (
-                Some((self.bus_read(ptr & 0xFF00) as u16) << 8 | self.bus_read(ptr + 0) as u16),
+                Some(((self.bus_read(ptr & 0xFF00) as u16) << 8) | self.bus_read(ptr) as u16),
                 false,
             )
         } else {
             (
-                Some((self.bus_read(ptr + 1) as u16) << 8 | self.bus_read(ptr + 0) as u16),
+                Some(((self.bus_read(ptr + 1) as u16) << 8) | self.bus_read(ptr) as u16),
                 false,
             )
         }
@@ -159,7 +161,7 @@ impl<'w> CpuQueryItem<'w> {
         let addr = self.cpu.adv();
         let addr = self.bus_read(addr) as u16;
 
-        let ptr = (self.bus_read(addr) as u16) | (self.bus_read(addr + 1) as u16) << 8;
+        let ptr = (self.bus_read(addr) as u16) | ((self.bus_read(addr + 1) as u16) << 8);
 
         let idy_addr = ptr.wrapping_add(self.cpu.y as u16);
         if idy_addr & 0xFF00 != ptr & 0xFF00 {
@@ -241,16 +243,16 @@ mod tests {
 
         query.cpu.x = 0x45;
         query.bus_write(0x0, 0x34);
-        query.bus_write(0x1, 0x3A);
-        assert_eq!(query.abx(), (Some(0x3A79), false));
+        query.bus_write(0x1, 0x00);
+        assert_eq!(query.abx(), (Some(0x0079), false));
         assert_eq!(query.cpu.pc, 0x2);
 
-        query.cpu.pc = 0x34;
+        query.cpu.pc = 0x1034;
         query.cpu.x = 0xFC;
-        query.bus_write(0x34, 0x0B);
-        query.bus_write(0x35, 0xFF);
+        query.bus_write(0x1034, 0x0B);
+        query.bus_write(0x1035, 0xFF);
         assert_eq!(query.abx(), (Some(0x0007), true));
-        assert_eq!(query.cpu.pc, 0x36);
+        assert_eq!(query.cpu.pc, 0x1036);
     }
 
     #[test]

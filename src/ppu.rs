@@ -1,7 +1,9 @@
-use bevy::{ecs::query::QueryData, input::common_conditions::input_toggle_active, prelude::*};
+use bevy::{ecs::query::QueryData, prelude::*};
 use bevy_egui::{egui, EguiContexts};
 use bitfield::bitfield;
-use pattern_buffer::PatternBufferPlugin;
+pub use pattern_buffer::{
+    draw_pattern_buffer, init_pattern_buffer, pattern_gui, update_pattern_buffer,
+};
 use screen_buffer::ScreenBufferPlugin;
 
 use crate::{
@@ -12,6 +14,8 @@ use crate::{
 mod palette;
 mod pattern_buffer;
 mod screen_buffer;
+
+pub use palette::PalettePlugin;
 
 #[derive(Debug)]
 pub struct PpuRegisters {
@@ -114,7 +118,13 @@ pub struct PpuQuery {
 }
 
 impl<'w> PpuQueryItem<'w> {
-    pub fn reset(&mut self) {}
+    pub fn reset(&mut self) {
+        self.ppu.registers.ctrl.0 = 0x00;
+        self.ppu.registers.mask.0 = 0x00;
+        self.ppu.registers.scroll = 0x00;
+        self.ppu.data_buffer = 0x00;
+        self.ppu.addr_latch = false;
+    }
 
     pub fn frame_complete(&mut self) -> bool {
         if self.ppu.frame_complete {
@@ -138,7 +148,6 @@ impl<'w> PpuQueryItem<'w> {
         if self.ppu.scanline == 241 && self.ppu.cycle == 1 {
             self.ppu.registers.status.set_vblank(true);
             if self.ppu.registers.ctrl.nmi() {
-                debug!("dispatching nmi");
                 self.ppu.nmi = true;
             }
         }
@@ -304,7 +313,17 @@ impl<'w> PpuQueryItem<'w> {
                     }
                 }
             }
-            0x3F00..=0x3FFF => self.ppu.palette_table[(addr & 0x1F) as usize] = data,
+            0x3F00..=0x3FFF => {
+                let addr = addr & 0x1F;
+                let addr = match addr {
+                    0x10 => 0x00,
+                    0x14 => 0x04,
+                    0x18 => 0x08,
+                    0x1C => 0x0C,
+                    _ => addr,
+                };
+                self.ppu.palette_table[addr as usize] = data;
+            }
             _ => {}
         }
     }
@@ -373,15 +392,11 @@ pub struct PpuPlugin;
 
 impl Plugin for PpuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((ScreenBufferPlugin, PatternBufferPlugin))
-            .add_systems(
-                Update,
-                ppu_info.run_if(input_toggle_active(false, KeyCode::KeyI)),
-            );
+        app.add_plugins(ScreenBufferPlugin);
     }
 }
 
-fn ppu_info(query: Query<PpuQuery>, mut contexts: EguiContexts) {
+pub fn ppu_gui(query: Query<PpuQuery>, mut contexts: EguiContexts) {
     egui::Window::new("PPU Info").show(&contexts.ctx_mut(), |ui| {
         if let Ok(query) = query.get_single() {
             ui.label("Registers");

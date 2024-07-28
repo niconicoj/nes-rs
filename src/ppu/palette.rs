@@ -18,8 +18,8 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub fn get_color(&self, color_id: u8) -> Color {
-        self.colors[color_id as usize]
+    pub fn get_color(&self, color_id: u8) -> Option<Color> {
+        self.colors.get((color_id & 0x3F) as usize).copied()
     }
 }
 
@@ -62,4 +62,19 @@ impl AssetLoader for PaletteLoader {
 pub struct PaletteState {
     pub palette_handle: Handle<Palette>,
     pub palette_id: u16,
+}
+
+pub struct PalettePlugin;
+
+impl Plugin for PalettePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<PaletteState>()
+            .init_asset::<Palette>()
+            .init_asset_loader::<PaletteLoader>()
+            .add_systems(Startup, palette_setup);
+    }
+}
+
+fn palette_setup(mut state: ResMut<PaletteState>, asset_server: Res<AssetServer>) {
+    state.palette_handle = asset_server.load("palettes/nespalette.pal");
 }

@@ -1,4 +1,4 @@
-use bevy::{ecs::query::QueryData, input::common_conditions::input_toggle_active, prelude::*};
+use bevy::{ecs::query::QueryData, prelude::*};
 use bevy_egui::{
     egui::{self, ScrollArea, Separator},
     EguiContexts,
@@ -79,40 +79,31 @@ impl<'w> CpuBusQueryItem<'w> {
     }
 }
 
-pub struct CpuBusPlugin;
-
-impl Plugin for CpuBusPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            wram_info.run_if(input_toggle_active(false, KeyCode::KeyI)),
-        );
-    }
-}
-
-fn wram_info(wram: Query<&Wram>, mut contexts: EguiContexts) {
+pub fn wram_gui(wram: Query<&Wram>, mut contexts: EguiContexts) {
     let wram = wram.single();
-    egui::Window::new("WRAM Info").show(&contexts.ctx_mut(), |ui| {
-        ui.monospace("         0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
-        ui.add(Separator::default().spacing(2.0));
-        let text_style = egui::TextStyle::Monospace;
-        let row_height = ui.text_style_height(&text_style);
-        let total_rows = 0x2000 / 16;
-        ui.push_id("wram", |ui| {
-            ScrollArea::vertical()
-                .auto_shrink(false)
-                .max_height(200.0)
-                .show_rows(ui, row_height, total_rows, |ui, row_range| {
-                    for row in row_range {
-                        let start = (row * 16) as u16;
-                        let end = start + 16;
-                        let row_text = (start..end)
-                            .map(|addr| format!("{:02X}", wram.data[(addr % 0x800) as usize]))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        ui.monospace(format!("${:#06X}: {}", start, row_text));
-                    }
-                });
+    egui::Window::new("WRAM Info")
+        .min_width(420.0)
+        .show(&contexts.ctx_mut(), |ui| {
+            ui.monospace("         0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
+            ui.add(Separator::default().spacing(2.0));
+            let text_style = egui::TextStyle::Monospace;
+            let row_height = ui.text_style_height(&text_style);
+            let total_rows = 0x2000 / 16;
+            ui.push_id("wram", |ui| {
+                ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .max_height(200.0)
+                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                        for row in row_range {
+                            let start = (row * 16) as u16;
+                            let end = start + 16;
+                            let row_text = (start..end)
+                                .map(|addr| format!("{:02X}", wram.data[(addr % 0x800) as usize]))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            ui.monospace(format!("${:#06X}: {}", start, row_text));
+                        }
+                    });
+            });
         });
-    });
 }

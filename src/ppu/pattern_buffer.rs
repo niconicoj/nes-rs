@@ -1,13 +1,12 @@
 use crate::ppu::palette::PaletteState;
 use crate::ppu::PpuQuery;
-use bevy::input::common_conditions::input_toggle_active;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_pixel_buffer::frame::GetFrameFromImages;
 use bevy_pixel_buffer::pixel_buffer::PixelBufferSize;
 use bevy_pixel_buffer::{builder::PixelBufferBuilder, egui::EguiTexture};
 
-use super::palette::{Palette, PaletteLoader};
+use super::palette::Palette;
 
 const PATTERN_WIDTH: u32 = 128;
 const PATTERN_HEIGHT: u32 = 128;
@@ -18,7 +17,7 @@ const PATTERN_SIZE: PixelBufferSize = PixelBufferSize {
 };
 
 #[derive(Component)]
-struct PatternBuffer {
+pub struct PatternBuffer {
     table_id: u16,
     buffer: [u8; 0x4000],
 }
@@ -32,32 +31,7 @@ impl PatternBuffer {
     }
 }
 
-pub struct PatternBufferPlugin;
-
-impl Plugin for PatternBufferPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<PaletteState>()
-            .init_asset::<Palette>()
-            .init_asset_loader::<PaletteLoader>()
-            .add_systems(Startup, (init_pattern_buffer, palette_setup))
-            .add_systems(
-                Update,
-                egui_pattern_buffer.run_if(input_toggle_active(false, KeyCode::KeyP)),
-            )
-            .add_systems(
-                PostUpdate,
-                update_pattern_buffer.run_if(input_toggle_active(false, KeyCode::KeyP)),
-            )
-            .add_systems(
-                PostUpdate,
-                draw_pattern_buffer
-                    .after(update_pattern_buffer)
-                    .run_if(input_toggle_active(false, KeyCode::KeyP)),
-            );
-    }
-}
-
-fn init_pattern_buffer(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+pub fn init_pattern_buffer(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     PixelBufferBuilder::new()
         .with_render(false)
         .with_size(PATTERN_SIZE)
@@ -73,11 +47,7 @@ fn init_pattern_buffer(mut commands: Commands, mut images: ResMut<Assets<Image>>
         .insert(PatternBuffer::new(1));
 }
 
-fn palette_setup(mut state: ResMut<PaletteState>, asset_server: Res<AssetServer>) {
-    state.palette_handle = asset_server.load("palettes/nespalette.pal");
-}
-
-fn update_pattern_buffer(ppu: Query<PpuQuery>, mut patterns: Query<&mut PatternBuffer>) {
+pub fn update_pattern_buffer(ppu: Query<PpuQuery>, mut patterns: Query<&mut PatternBuffer>) {
     if let Ok(ppu) = ppu.get_single() {
         for mut pattern in &mut patterns {
             for addr in 0x00..=0xFF {
@@ -101,7 +71,7 @@ fn update_pattern_buffer(ppu: Query<PpuQuery>, mut patterns: Query<&mut PatternB
     }
 }
 
-fn draw_pattern_buffer(
+pub fn draw_pattern_buffer(
     mut images: ResMut<Assets<Image>>,
     palette_state: Res<PaletteState>,
     palettes: Res<Assets<Palette>>,
@@ -115,14 +85,18 @@ fn draw_pattern_buffer(
         for (img, pb) in &pbs {
             images.frame(img).per_pixel(|coord, _| {
                 let pixel = pb.buffer[(coord.x + coord.y * PATTERN_WIDTH) as usize] as u16;
-                let color_id = query.ppu_read(0x3F00 + (palette_state.palette_id << 2) + pixel);
-                palette.get_color(color_id)
+                let addr = 0x3F00 + (palette_state.palette_id << 2) + pixel;
+                let color_id = query.ppu_read(addr);
+                palette.get_color(color_id).expect(&format!(
+                    "invalid color id {:#04x} was found at memory location {:#06x}",
+                    color_id, addr
+                ))
             });
         }
     }
 }
 
-fn egui_pattern_buffer(
+pub fn pattern_gui(
     mut contexts: EguiContexts,
     pbs: Query<(&EguiTexture, &PatternBuffer)>,
     mut state: ResMut<PaletteState>,

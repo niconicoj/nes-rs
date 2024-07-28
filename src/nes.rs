@@ -1,12 +1,11 @@
-use bevy::{input::common_conditions::input_toggle_active, prelude::*};
-use bevy_egui::{egui, EguiContexts};
+use bevy::prelude::*;
 use clap::Parser;
 
 use crate::{
-    cartridge::{self, Cartridge, CartridgePlugin},
+    cartridge::Cartridge,
     cpu::{Cpu, CpuPlugin, SystemClock},
-    cpu_bus::{CpuBusPlugin, Wram},
-    ppu::{Ppu, PpuPlugin},
+    cpu_bus::Wram,
+    ppu::{PalettePlugin, Ppu, PpuPlugin},
 };
 
 #[derive(Default, Component)]
@@ -42,12 +41,8 @@ impl NesPlugin {
 impl Plugin for NesPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.args.clone())
-            .add_plugins((CpuPlugin, CpuBusPlugin, CartridgePlugin, PpuPlugin))
-            .add_systems(Startup, init_nes)
-            .add_systems(
-                Update,
-                main_ui.run_if(input_toggle_active(false, KeyCode::KeyU)),
-            );
+            .add_plugins((CpuPlugin, PpuPlugin, PalettePlugin))
+            .add_systems(Startup, init_nes);
     }
 }
 
@@ -62,14 +57,4 @@ fn init_nes(mut commands: Commands, args: Res<ArgsResource>) {
             commands.spawn(NesBundle::default());
         }
     }
-}
-
-fn main_ui(mut contexts: EguiContexts) {
-    egui::SidePanel::right("nes_rs_panel")
-        .resizable(false)
-        .default_width(150.0)
-        .show(contexts.ctx_mut(), |ui| {
-            ui.vertical_centered(|ui| ui.heading("Tools"));
-            ui.separator();
-        });
 }
