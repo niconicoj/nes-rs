@@ -362,9 +362,8 @@ impl<'w> CpuQueryItem<'w> {
     }
 
     pub fn jsr(&mut self, addr: Option<u16>) -> bool {
-        let pc_bytes = self.cpu.pc.to_be_bytes();
-        self.stack_push(pc_bytes[0]);
-        self.stack_push(pc_bytes[1]);
+        self.stack_push((self.cpu.pc >> 8 & 0x00FF) as u8);
+        self.stack_push((self.cpu.pc & 0x00FF) as u8);
 
         self.cpu.pc = addr.expect("no operand for jsr");
 
@@ -449,8 +448,7 @@ impl<'w> CpuQueryItem<'w> {
     }
 
     pub fn rts(&mut self) -> bool {
-        self.cpu.pc = u16::from_le_bytes([self.stack_pull(), self.stack_pull()]);
-        self.cpu.pc += 1;
+        self.cpu.pc = (self.stack_pull() as u16) | ((self.stack_pull() as u16) << 8);
         false
     }
 
@@ -1417,7 +1415,7 @@ mod tests {
         query.cpu.sp = 0xFD;
 
         assert!(!query.rts());
-        assert_eq!(query.cpu.pc, 0x3466);
+        assert_eq!(query.cpu.pc, 0x3465);
     }
 
     #[test]

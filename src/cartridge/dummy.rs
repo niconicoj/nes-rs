@@ -1,30 +1,19 @@
-use bevy_egui::egui;
-
-use crate::mem::Mem;
-
-use super::Mapper;
+use super::{mapper::MappedAddr, Mapper};
 
 #[derive(Default)]
-pub struct DummyMapper {
-    prg_ram: Mem<0x10000>,
-    chr_ram: Mem<0x10000>,
-}
+pub struct DummyMapper;
 
 impl Mapper for DummyMapper {
-    fn cpu_read(&self, addr: u16) -> Option<u8> {
-        Some(self.prg_ram.read(addr))
+    fn cpu_map_read(&self, addr: u16) -> Option<MappedAddr> {
+        Some(MappedAddr { bank: 0, addr })
     }
-    fn cpu_write(&mut self, addr: u16, data: u8) -> Option<()> {
-        self.prg_ram.write(addr, data);
-        Some(())
+    fn cpu_map_write(&self, addr: u16, _data: u8) -> Option<MappedAddr> {
+        Some(MappedAddr { bank: 0, addr })
     }
-    fn ppu_read(&self, addr: u16) -> Option<u8> {
-        Some(self.chr_ram.read(addr))
+    fn ppu_map_read(&self, addr: u16) -> Option<MappedAddr> {
+        Some(MappedAddr { bank: 0, addr })
     }
-    fn ppu_write(&mut self, addr: u16, data: u8) -> Option<()> {
-        self.chr_ram.write(addr, data);
-        Some(())
+    fn ppu_map_write(&self, addr: u16, _data: u8) -> Option<MappedAddr> {
+        Some(MappedAddr { bank: 0, addr })
     }
-
-    fn ui(&self, _: &mut egui::Ui) {}
 }

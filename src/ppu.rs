@@ -4,7 +4,10 @@ use bitfield::bitfield;
 use pattern_buffer::PatternBufferPlugin;
 use screen_buffer::ScreenBufferPlugin;
 
-use crate::{cartridge::Cartridge, mem::Mem};
+use crate::{
+    cartridge::{Cartridge, Mirroring},
+    mem::Mem,
+};
 
 mod palette;
 mod pattern_buffer;
@@ -82,6 +85,7 @@ pub struct Ppu {
     data_buffer: u8,
     ppu_addr: u16,
     addr_latch: bool,
+    nmi: bool,
 }
 
 impl Default for Ppu {
@@ -97,6 +101,7 @@ impl Default for Ppu {
             data_buffer: 0x00,
             ppu_addr: 0x00,
             addr_latch: false,
+            nmi: false,
         }
     }
 }
@@ -120,11 +125,26 @@ impl<'w> PpuQueryItem<'w> {
         }
     }
 
+    pub fn nmi(&mut self) -> bool {
+        let v = self.ppu.nmi;
+        self.ppu.nmi = false;
+        v
+    }
+
     pub fn tick(&mut self) {
+        if self.ppu.scanline == u16::MAX && self.ppu.cycle == 1 {
+            self.ppu.registers.status.set_vblank(false);
+        }
+        if self.ppu.scanline == 241 && self.ppu.cycle == 1 {
+            self.ppu.registers.status.set_vblank(true);
+            if self.ppu.registers.ctrl.nmi() {
+                debug!("dispatching nmi");
+                self.ppu.nmi = true;
+            }
+        }
         if self.ppu.frame_complete {
             self.ppu.frame_complete = false;
         }
-        self.set_pixel(if rand::random() { 0x01 } else { 0x00 });
 
         self.ppu.cycle = self.ppu.cycle.wrapping_add(1);
         if self.ppu.cycle >= 341 {
@@ -133,16 +153,6 @@ impl<'w> PpuQueryItem<'w> {
             if self.ppu.scanline >= 261 {
                 self.ppu.scanline = u16::MAX;
                 self.ppu.frame_complete = true;
-            }
-        }
-    }
-
-    fn set_pixel(&mut self, color_id: u8) {
-        let y = self.ppu.scanline as usize;
-        let x = self.ppu.cycle as usize;
-        if let Some(row) = self.ppu.screen_buffer.get_mut(y) {
-            if let Some(pixel) = row.get_mut(x) {
-                *pixel = color_id;
             }
         }
     }
@@ -175,7 +185,6 @@ impl<'w> PpuQueryItem<'w> {
             0x00 => self.ppu.registers.ctrl.0,
             0x01 => self.ppu.registers.mask.0,
             0x02 => {
-                self.ppu.registers.status.set_vblank(true);
                 let data = (self.ppu.registers.status.0 & 0xE0) | (self.ppu.data_buffer & 0x1F);
                 self.ppu.registers.status.set_vblank(false);
                 self.ppu.addr_latch = false;
@@ -194,7 +203,11 @@ impl<'w> PpuQueryItem<'w> {
                     self.ppu.data_buffer = self.ppu_read(self.ppu.ppu_addr);
                     data
                 };
-                self.ppu.ppu_addr += 1;
+                self.ppu.ppu_addr += if self.ppu.registers.ctrl.increment_mode() {
+                    32
+                } else {
+                    1
+                };
                 data
             }
             _ => unreachable!(),
@@ -221,7 +234,11 @@ impl<'w> PpuQueryItem<'w> {
             }
             0x07 => {
                 self.ppu_write(self.ppu.ppu_addr, data);
-                self.ppu.ppu_addr += 1;
+                self.ppu.ppu_addr += if self.ppu.registers.ctrl.increment_mode() {
+                    32
+                } else {
+                    1
+                };
             }
             _ => unreachable!(),
         }
@@ -234,14 +251,29 @@ impl<'w> PpuQueryItem<'w> {
                 .as_ref()
                 .and_then(|cartridge| cartridge.ppu_read(addr))
                 .unwrap_or(0),
-            0x2000..=0x3EFF => self
-                .cartridge
-                .as_ref()
-                .and_then(|mapper| mapper.ppu_read(addr))
-                .unwrap_or_else(|| {
-                    let bank_nbr = (addr & 0x0800 >> 11) as usize;
-                    self.ppu.name_table[bank_nbr].read(addr)
-                }),
+            0x2000..=0x3EFF => {
+                match self
+                    .cartridge
+                    .as_ref()
+                    .and_then(|mapper| mapper.ppu_read(addr))
+                {
+                    Some(data) => data,
+                    None => match self
+                        .cartridge
+                        .as_ref()
+                        .map(|cartridge| cartridge.mirroring())
+                    {
+                        Some(Mirroring::Vertical) => {
+                            let bank_nbr = (addr & 0x0400 >> 10) as usize;
+                            self.ppu.name_table[bank_nbr].read(addr)
+                        }
+                        Some(Mirroring::Horizontal) | None => {
+                            let bank_nbr = (addr & 0x0800 >> 11) as usize;
+                            self.ppu.name_table[bank_nbr].read(addr)
+                        }
+                    },
+                }
+            }
             0x3F00..=0x3FFF => {
                 let addr = addr & 0x1F;
                 let addr = match addr {
@@ -266,7 +298,7 @@ impl<'w> PpuQueryItem<'w> {
             }
             0x2000..=0x3EFF => {
                 if let Some(mapper) = &mut self.cartridge {
-                    if mapper.ppu_write(addr, data) == None {
+                    if !mapper.ppu_write(addr, data) {
                         let bank_nbr = (addr & 0x0800 >> 11) as usize;
                         self.ppu.name_table[bank_nbr].write(addr, data);
                     }

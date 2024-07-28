@@ -10,10 +10,8 @@ impl<const S: usize> Default for Mem<S> {
 }
 
 impl<const S: usize> Mem<S> {
-    pub fn write_slice(&mut self, addr: u16, data: &[u8]) {
-        let start = addr as usize;
-        let end = start + data.len();
-        self.data[start..end].copy_from_slice(data);
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.data.as_mut_slice()
     }
 
     pub fn read(&self, addr: u16) -> u8 {

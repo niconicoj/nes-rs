@@ -211,6 +211,10 @@ impl<'w> CpuQueryItem<'w> {
         if self.clock.cycles % 3 == 0 {
             self.tick();
         }
+        if self.bus.nmi() {
+            debug!("nmi !");
+            self.nmi();
+        }
     }
 
     fn tick(&mut self) {
@@ -451,5 +455,36 @@ fn cpu_loop(mut query: Query<CpuQuery>, breakpoints: Res<BreakPointState>, time:
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{cartridge::Cartridge, cpu::CpuQuery, nes::NesBundle};
+    use bevy::prelude::*;
+
+    macro_rules! setup {
+        ($var:ident) => {
+            let mut app = App::new();
+            let cart = Cartridge::testing();
+            app.world_mut().spawn((NesBundle::default(), cart));
+            let mut query = app.world_mut().query::<CpuQuery>();
+            let mut $var = query.single_mut(app.world_mut());
+            $var.cpu.pc = 0x00;
+        };
+    }
+    #[test]
+    fn nmi() {
+        setup!(query);
+        query.cpu.pc = 0x1234;
+        query.bus.cpu_write(0xFFFA, 0x21);
+        query.bus.cpu_write(0xFFFB, 0x43);
+
+        query.nmi();
+
+        assert_eq!(query.cpu.pc, 0x4321);
+        assert_eq!(query.bus.cpu_read(0x01FD), Some(0x12));
+        assert_eq!(query.bus.cpu_read(0x01FC), Some(0x34));
+        assert_eq!(query.bus.cpu_read(0x01FB), Some(0b0010_0100));
     }
 }
