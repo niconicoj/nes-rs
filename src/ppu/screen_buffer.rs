@@ -3,7 +3,10 @@ use bevy_pixel_buffer::{
     builder::PixelBufferBuilder, frame::GetFrameFromImages, pixel_buffer::PixelBufferSize,
 };
 
-use super::Ppu;
+use super::{
+    palette::{Palette, PaletteState},
+    Ppu,
+};
 
 const SCREEN_WIDTH: u32 = 256;
 const SCREEN_HEIGHT: u32 = 240;
@@ -36,15 +39,21 @@ fn init_screen_buffer(mut commands: Commands, mut images: ResMut<Assets<Image>>)
 
 fn update_screen_buffer(
     mut images: ResMut<Assets<Image>>,
+    palette_state: Res<PaletteState>,
+    palettes: Res<Assets<Palette>>,
     pb: Query<(&Handle<Image>, &ScreenBuffer)>,
     ppu: Query<&Ppu>,
 ) {
-    if let (Ok((pb, _)), Ok(ppu)) = (pb.get_single(), ppu.get_single()) {
+    if let (Ok((pb, _)), Ok(ppu), Some(palette)) = (
+        pb.get_single(),
+        ppu.get_single(),
+        palettes.get(&palette_state.palette_handle),
+    ) {
         images.frame(pb).per_pixel(|coord, _| {
-            match ppu.screen_buffer[coord.y as usize][coord.x as usize] {
-                0x01 => Color::WHITE,
-                _ => Color::BLACK,
-            }
+            let color_id = ppu.screen_buffer[coord.y as usize][coord.x as usize];
+            palette
+                .get_color(color_id)
+                .expect(&format!("invalid color id {:#04x}", color_id))
         });
     }
 }
