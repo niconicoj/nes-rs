@@ -6,6 +6,41 @@ use bevy_egui::{
 
 use crate::ppu::PpuQuery;
 
+#[derive(Component, Default)]
+pub struct Controller {
+    state: u8,
+    shifter: u8,
+}
+
+impl Controller {
+    fn store_shifter(&mut self) {
+        self.shifter = self.state;
+    }
+
+    fn read_shifter(&mut self) -> u8 {
+        let result = (self.shifter & 0x80 != 0) as u8;
+        self.shifter <<= 1;
+        result
+    }
+}
+
+pub fn update_controller_state(mut query: Query<&mut Controller>, keys: Res<ButtonInput<KeyCode>>) {
+    if let Ok(mut controller) = query.get_single_mut() {
+        controller.state = 0x00;
+        keys.get_pressed().for_each(|key| match key {
+            KeyCode::KeyW => controller.state |= 0x80, // A
+            KeyCode::KeyX => controller.state |= 0x40, // B
+            KeyCode::KeyQ => controller.state |= 0x20, // select
+            KeyCode::KeyS => controller.state |= 0x10, // start
+            KeyCode::ArrowUp => controller.state |= 0x08,
+            KeyCode::ArrowDown => controller.state |= 0x04,
+            KeyCode::ArrowLeft => controller.state |= 0x02,
+            KeyCode::ArrowRight => controller.state |= 0x01,
+            _ => {}
+        });
+    }
+}
+
 #[derive(Component)]
 pub struct Wram {
     data: [u8; 0x800],
@@ -30,6 +65,7 @@ impl Wram {
 #[query_data(mutable)]
 pub struct CpuBusQuery {
     wram: &'static mut Wram,
+    controller: &'static mut Controller,
     ppu: PpuQuery,
 }
 
@@ -65,6 +101,7 @@ impl<'w> CpuBusQueryItem<'w> {
         match addr {
             0x0000..=0x1FFF => Some(self.wram.read(addr)),
             0x2000..=0x3FFF => self.ppu.cpu_read(addr),
+            0x4016 | 0x4017 => Some(self.controller.read_shifter()),
             0x4020..=0xFFFF => self.ppu.cpu_read(addr),
             _ => None,
         }
@@ -73,6 +110,7 @@ impl<'w> CpuBusQueryItem<'w> {
         match addr {
             0x0000..=0x1FFF => self.wram.write(addr, data),
             0x2000..=0x3FFF => self.ppu.cpu_write(addr, data),
+            0x4016 | 0x4017 => self.controller.store_shifter(),
             0x4020..=0xFFFF => self.ppu.cpu_write(addr, data),
             _ => {}
         };

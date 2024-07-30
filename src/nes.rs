@@ -4,7 +4,7 @@ use clap::Parser;
 use crate::{
     cartridge::Cartridge,
     cpu::{Cpu, CpuPlugin, SystemClock},
-    cpu_bus::Wram,
+    cpu_bus::{update_controller_state, Controller, Wram},
     ppu::{PalettePlugin, Ppu, PpuPlugin},
 };
 
@@ -18,6 +18,7 @@ pub struct NesBundle {
     cpu: Cpu,
     wram: Wram,
     ppu: Ppu,
+    controller: Controller,
 }
 
 #[derive(Parser, Resource, Clone)]
@@ -42,7 +43,8 @@ impl Plugin for NesPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.args.clone())
             .add_plugins((CpuPlugin, PpuPlugin, PalettePlugin))
-            .add_systems(Startup, init_nes);
+            .add_systems(Startup, init_nes)
+            .add_systems(Update, update_controller_state);
     }
 }
 

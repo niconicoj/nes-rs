@@ -213,7 +213,7 @@ impl<'w> CpuQueryItem<'w> {
         let fetched = self.fetch(addr);
         let result = fetched << 1;
 
-        self.cpu.status.set_carry(result < fetched);
+        self.cpu.status.set_carry(fetched & 0x80 != 0);
         self.cpu.status.set_zero(result == 0);
         self.cpu.status.set_negative(result & 0x80 != 0);
 
@@ -362,6 +362,7 @@ impl<'w> CpuQueryItem<'w> {
     }
 
     pub fn jsr(&mut self, addr: Option<u16>) -> bool {
+        self.cpu.pc = self.cpu.pc.wrapping_sub(1);
         self.stack_push((self.cpu.pc >> 8 & 0x00FF) as u8);
         self.stack_push((self.cpu.pc & 0x00FF) as u8);
 
@@ -424,31 +425,36 @@ impl<'w> CpuQueryItem<'w> {
     }
 
     pub fn php(&mut self) -> bool {
-        self.stack_push(self.cpu.status.0);
+        self.stack_push(self.cpu.status.0 | 0x30);
+        self.cpu.status.set_b_flag(false);
         false
     }
 
     pub fn pla(&mut self) -> bool {
         self.cpu.a = self.stack_pull();
+        let zero = self.cpu.a == 0;
+        self.cpu.status.set_zero(zero);
+        let negative = self.cpu.a & 0x80 != 0;
+        self.cpu.status.set_negative(negative);
         false
     }
 
     pub fn plp(&mut self) -> bool {
-        self.cpu.status.0 = self.stack_pull();
+        self.cpu.status.0 = self.stack_pull() | 0x20;
         false
     }
 
     pub fn rti(&mut self) -> bool {
-        self.cpu.status.0 = self.stack_pull();
+        self.cpu.status.0 = self.stack_pull() | 0x20;
         self.cpu.status.set_b_flag(false);
-        self.cpu.status.set_no_interrupt(false);
 
-        self.cpu.pc = u16::from_le_bytes([self.stack_pull(), self.stack_pull()]);
+        self.cpu.pc = (self.stack_pull() as u16) | ((self.stack_pull() as u16) << 8);
         false
     }
 
     pub fn rts(&mut self) -> bool {
         self.cpu.pc = (self.stack_pull() as u16) | ((self.stack_pull() as u16) << 8);
+        self.cpu.pc = self.cpu.pc.wrapping_add(1);
         false
     }
 
@@ -1303,7 +1309,7 @@ mod tests {
         assert!(!query.jsr(addr));
 
         assert_eq!(query.bus_read(0x01FF), 0x56);
-        assert_eq!(query.bus_read(0x01FE), 0x78);
+        assert_eq!(query.bus_read(0x01FE), 0x77);
         assert_eq!(query.cpu.pc, 0x1234);
     }
 
@@ -1359,7 +1365,7 @@ mod tests {
 
         query.cpu.status.0 = 0x12;
         assert!(!query.php());
-        assert_eq!(query.bus_read(0x01FD), 0x12);
+        assert_eq!(query.bus_read(0x01FD), 0x32);
 
         query.cpu.status.0 = 0x34;
         assert!(!query.php());
@@ -1389,7 +1395,7 @@ mod tests {
         assert!(!query.plp());
         assert_eq!(query.cpu.status.0, 0x23);
         assert!(!query.plp());
-        assert_eq!(query.cpu.status.0, 0x12);
+        assert_eq!(query.cpu.status.0, 0x32);
     }
 
     #[test]
@@ -1398,10 +1404,10 @@ mod tests {
 
         query.stack_push(0x12);
         query.stack_push(0x34);
-        query.stack_push(0x56);
+        query.stack_push(0b10110000);
 
         assert!(!query.rti());
-        assert_eq!(query.cpu.status.0, 0x56 & 0xEF & 0xFB);
+        assert_eq!(query.cpu.status.0, 0b10100000);
         assert_eq!(query.cpu.pc, 0x1234);
     }
 
@@ -1415,7 +1421,7 @@ mod tests {
         query.cpu.sp = 0xFD;
 
         assert!(!query.rts());
-        assert_eq!(query.cpu.pc, 0x3465);
+        assert_eq!(query.cpu.pc, 0x3466);
     }
 
     #[test]

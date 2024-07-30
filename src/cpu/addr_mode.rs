@@ -159,12 +159,14 @@ impl<'w> CpuQueryItem<'w> {
 
     fn idy(&mut self) -> (Option<u16>, bool) {
         let addr = self.cpu.adv();
-        let addr = self.bus_read(addr) as u16;
+        let addr = self.bus_read(addr);
 
-        let ptr = (self.bus_read(addr) as u16) | ((self.bus_read(addr + 1) as u16) << 8);
+        let lo = self.bus_read(addr as u16) as u16;
+        let hi = self.bus_read(addr.wrapping_add(1) as u16) as u16;
 
-        let idy_addr = ptr.wrapping_add(self.cpu.y as u16);
-        if idy_addr & 0xFF00 != ptr & 0xFF00 {
+        let idy_addr = (hi << 8 | lo).wrapping_add(self.cpu.y as u16);
+
+        if idy_addr & 0xFF00 != (hi << 8) {
             (Some(idy_addr), true)
         } else {
             (Some(idy_addr), false)
@@ -382,12 +384,20 @@ mod tests {
         assert_eq!(query.idy(), (Some(0x124E), false));
         assert_eq!(query.cpu.pc, 0x01);
 
-        query.cpu.pc = 0x12;
-        query.cpu.y = 0xB6;
-        query.bus_write(0x12, 0x64);
-        query.bus_write(0x64, 0x86);
-        query.bus_write(0x65, 0x12);
-        assert_eq!(query.idy(), (Some(0x133C), true));
-        assert_eq!(query.cpu.pc, 0x13);
+        query.cpu.pc = 0x14;
+        query.cpu.y = 0x01;
+        query.bus_write(0x14, 0xAB);
+        query.bus_write(0x00AB, 0xFF);
+        query.bus_write(0x00AC, 0x12);
+        assert_eq!(query.idy(), (Some(0x1300), true));
+        assert_eq!(query.cpu.pc, 0x15);
+
+        query.cpu.pc = 0x16;
+        query.cpu.y = 0x00;
+        query.bus_write(0x16, 0xFF);
+        query.bus_write(0x00FF, 0xAD);
+        query.bus_write(0x0000, 0xDE);
+        assert_eq!(query.idy(), (Some(0xDEAD), false));
+        assert_eq!(query.cpu.pc, 0x17);
     }
 }
