@@ -376,7 +376,7 @@ impl<'w> PpuQueryItem<'w> {
 
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
-            0x2000..=0x3FFF => Some(self.ppu_register_read(addr)),
+            0x2000..=0x3FFF => Some(self.ppu_register_read(addr).unwrap_or(self.ppu.data_buffer)),
             0x4020..=0xFFFF => self
                 .cartridge
                 .as_mut()
@@ -396,21 +396,21 @@ impl<'w> PpuQueryItem<'w> {
         }
     }
 
-    fn ppu_register_read(&mut self, addr: u16) -> u8 {
+    fn ppu_register_read(&mut self, addr: u16) -> Option<u8> {
         let addr = addr & 0x07;
         match addr {
-            0x00 => self.ppu.registers.ctrl.0,
-            0x01 => self.ppu.registers.mask.0,
+            0x00 => None,
+            0x01 => None,
             0x02 => {
                 let data = (self.ppu.registers.status.0 & 0xE0) | (self.ppu.data_buffer & 0x1F);
                 self.ppu.registers.status.set_vblank(false);
                 self.ppu.addr_latch = false;
-                data
+                Some(data)
             }
-            0x03 => self.ppu.registers.oam_addr,
-            0x04 => self.ppu.registers.oam_data,
-            0x05 => self.ppu.registers.scroll,
-            0x06 => self.ppu.registers.addr,
+            0x03 => None,
+            0x04 => None,
+            0x05 => None,
+            0x06 => None,
             0x07 => {
                 let data = if self.ppu.vram_addr.0 >= 0x3F00 {
                     self.ppu.data_buffer = self.ppu_read(self.ppu.vram_addr.0);
@@ -425,7 +425,7 @@ impl<'w> PpuQueryItem<'w> {
                 } else {
                     1
                 };
-                data
+                Some(data)
             }
             _ => unreachable!(),
         }
@@ -438,6 +438,8 @@ impl<'w> PpuQueryItem<'w> {
                 self.ppu.registers.ctrl.0 = data;
                 let ntx = self.ppu.registers.ctrl.nametable_x() as u16;
                 self.ppu.tram_addr.set_nametable_x(ntx);
+                let nty = self.ppu.registers.ctrl.nametable_y() as u16;
+                self.ppu.tram_addr.set_nametable_y(nty);
             }
             0x01 => self.ppu.registers.mask.0 = data,
             0x02 => {}
@@ -483,7 +485,7 @@ impl<'w> PpuQueryItem<'w> {
                 .as_ref()
                 .and_then(|cartridge| cartridge.ppu_read(addr))
                 .unwrap_or(0),
-            0x2000..=0x3EFF => {
+            0x2000..=0x2FFF => {
                 match self
                     .cartridge
                     .as_ref()
@@ -496,12 +498,12 @@ impl<'w> PpuQueryItem<'w> {
                         .map(|cartridge| cartridge.mirroring())
                     {
                         Some(Mirroring::Vertical) => {
-                            let bank_nbr = (addr & 0x0400 >> 10) as usize;
-                            self.ppu.name_table[bank_nbr].read(addr)
+                            let bank_id = ((addr & 0x0400) >> 10) as usize;
+                            self.ppu.name_table[bank_id].read(addr)
                         }
                         Some(Mirroring::Horizontal) | None => {
-                            let bank_nbr = (addr & 0x0800 >> 11) as usize;
-                            self.ppu.name_table[bank_nbr].read(addr)
+                            let bank_id = ((addr & 0x0800) >> 11) as usize;
+                            self.ppu.name_table[bank_id].read(addr)
                         }
                     },
                 }
@@ -528,21 +530,21 @@ impl<'w> PpuQueryItem<'w> {
                     let _ = cartridge.ppu_write(addr, data);
                 }
             }
-            0x2000..=0x3EFF => {
-                if let Some(mapper) = &mut self.cartridge {
-                    if !mapper.ppu_write(addr, data) {
+            0x2000..=0x2FFF => {
+                if let Some(cartridge) = &mut self.cartridge {
+                    if !cartridge.ppu_write(addr, data) {
                         match self
                             .cartridge
                             .as_ref()
                             .map(|cartridge| cartridge.mirroring())
                         {
                             Some(Mirroring::Vertical) => {
-                                let bank_nbr = (addr & 0x0400 >> 10) as usize;
-                                self.ppu.name_table[bank_nbr].write(addr, data)
+                                let bank_id = ((addr & 0x0400) >> 10) as usize;
+                                self.ppu.name_table[bank_id].write(addr, data)
                             }
                             Some(Mirroring::Horizontal) | None => {
-                                let bank_nbr = (addr & 0x0800 >> 11) as usize;
-                                self.ppu.name_table[bank_nbr].write(addr, data)
+                                let bank_id = ((addr & 0x0800) >> 11) as usize;
+                                self.ppu.name_table[bank_id].write(addr, data)
                             }
                         }
                     }
@@ -584,7 +586,7 @@ impl<'w> PpuQueryReadOnlyItem<'w> {
                 .as_ref()
                 .and_then(|cartridge| cartridge.ppu_read(addr))
                 .unwrap_or(0),
-            0x2000..=0x3EFF => self
+            0x2000..=0x2FFF => self
                 .cartridge
                 .as_ref()
                 .and_then(|mapper| mapper.ppu_read(addr))
@@ -706,6 +708,23 @@ pub fn ppu_gui(query: Query<PpuQuery>, mut contexts: EguiContexts) {
 #[cfg(test)]
 mod tests {
     use super::LoopyRegister;
+    use crate::{
+        cartridge::{CartridgeHeader, Mirroring},
+        nes::NesBundle,
+        ppu::{Cartridge, PpuQuery},
+    };
+    use bevy::prelude::*;
+
+    macro_rules! setup {
+        ($var:ident, $mirroring:expr) => {
+            let mut app = App::new();
+            let cart_header = CartridgeHeader::with_mirroring($mirroring);
+            let cart = Cartridge::testing(Some(cart_header));
+            app.world_mut().spawn((NesBundle::default(), cart));
+            let mut query = app.world_mut().query::<PpuQuery>();
+            let mut $var = query.single_mut(app.world_mut());
+        };
+    }
 
     #[test]
     fn loopy_registers() {
@@ -723,5 +742,73 @@ mod tests {
 
         register.set_coarse_y(0x0E);
         assert_eq!(register.0, 0x05DF);
+    }
+
+    #[test]
+    fn horizontal_nametable_mirroring() {
+        setup!(query, Mirroring::Horizontal);
+
+        assert_eq!(query.ppu_read(0x2000), 0x00);
+        assert_eq!(query.ppu_read(0x2400), 0x00);
+        assert_eq!(query.ppu_read(0x2800), 0x00);
+        assert_eq!(query.ppu_read(0x2C00), 0x00);
+
+        query.ppu_write(0x2000, 0x01);
+        assert_eq!(query.ppu_read(0x2000), 0x01);
+        assert_eq!(query.ppu_read(0x2400), 0x01);
+        assert_eq!(query.ppu_read(0x2800), 0x00);
+        assert_eq!(query.ppu_read(0x2C00), 0x00);
+
+        query.ppu_write(0x23FF, 0x02);
+        assert_eq!(query.ppu_read(0x23FF), 0x02);
+        assert_eq!(query.ppu_read(0x27FF), 0x02);
+        assert_eq!(query.ppu_read(0x2BFF), 0x00);
+        assert_eq!(query.ppu_read(0x2FFF), 0x00);
+
+        query.ppu_write(0x2800, 0x03);
+        assert_eq!(query.ppu_read(0x2000), 0x01);
+        assert_eq!(query.ppu_read(0x2400), 0x01);
+        assert_eq!(query.ppu_read(0x2800), 0x03);
+        assert_eq!(query.ppu_read(0x2C00), 0x03);
+
+        query.ppu_write(0x2FFF, 0x04);
+        assert_eq!(query.ppu_read(0x23FF), 0x02);
+        assert_eq!(query.ppu_read(0x27FF), 0x02);
+        assert_eq!(query.ppu_read(0x2BFF), 0x04);
+        assert_eq!(query.ppu_read(0x2FFF), 0x04);
+    }
+
+    #[test]
+    fn vertical_nametable_mirroring() {
+        setup!(query, Mirroring::Vertical);
+
+        assert_eq!(query.ppu_read(0x2000), 0x00);
+        assert_eq!(query.ppu_read(0x2800), 0x00);
+        assert_eq!(query.ppu_read(0x2400), 0x00);
+        assert_eq!(query.ppu_read(0x2C00), 0x00);
+
+        query.ppu_write(0x2000, 0x01);
+        assert_eq!(query.ppu_read(0x2000), 0x01);
+        assert_eq!(query.ppu_read(0x2800), 0x01);
+        assert_eq!(query.ppu_read(0x2400), 0x00);
+        assert_eq!(query.ppu_read(0x2C00), 0x00);
+
+        query.ppu_write(0x23FF, 0x02);
+        assert_eq!(query.ppu_read(0x23FF), 0x02);
+        assert_eq!(query.ppu_read(0x2BFF), 0x02);
+        assert_eq!(query.ppu_read(0x27FF), 0x00);
+        assert_eq!(query.ppu_read(0x2FFF), 0x00);
+
+        query.ppu_write(0x2C00, 0x03);
+        assert_eq!(query.ppu_read(0x2000), 0x01);
+        assert_eq!(query.ppu_read(0x2800), 0x01);
+        assert_eq!(query.ppu_read(0x2400), 0x03);
+        assert_eq!(query.ppu_read(0x2C00), 0x03);
+
+        query.ppu_write(0x27FF, 0x04);
+        assert_eq!(query.ppu_read(0x23FF), 0x02);
+        assert_eq!(query.ppu_read(0x2BFF), 0x02);
+        assert_eq!(query.ppu_read(0x27FF), 0x04);
+        assert_eq!(query.ppu_read(0x2FFF), 0x04);
     }
 }

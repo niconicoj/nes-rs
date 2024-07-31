@@ -55,6 +55,13 @@ pub enum HeaderError {
 }
 
 impl CartridgeHeader {
+    #[cfg(test)]
+    pub fn with_mirroring(mirroring: Mirroring) -> Self {
+        let mut h = Self::default();
+        h.mirroring = mirroring;
+        h
+    }
+
     pub fn from_bytes(bytes: &[u8; 16]) -> Result<Self, HeaderError> {
         match bytes[7] & 0x0C {
             0x08 => Self::parse_nes2(bytes),
@@ -99,9 +106,9 @@ pub struct Cartridge {
 
 impl Cartridge {
     #[cfg(test)]
-    pub fn testing() -> Self {
+    pub fn testing(header: Option<CartridgeHeader>) -> Self {
         let mapper: Box<dyn Mapper> = Box::new(DummyMapper::default());
-        let header = CartridgeHeader::default();
+        let header = header.unwrap_or(CartridgeHeader::default());
 
         Self {
             header,

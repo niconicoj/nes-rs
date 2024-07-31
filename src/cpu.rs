@@ -460,7 +460,7 @@ mod tests {
     macro_rules! setup {
         ($var:ident) => {
             let mut app = App::new();
-            let cart = Cartridge::testing();
+            let cart = Cartridge::testing(None);
             app.world_mut().spawn((NesBundle::default(), cart));
             let mut query = app.world_mut().query::<CpuQuery>();
             let mut $var = query.single_mut(app.world_mut());
