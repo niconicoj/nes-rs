@@ -1,5 +1,8 @@
-use bevy::{ecs::query::QueryData, prelude::*};
-use bevy_egui::{egui, EguiContexts};
+use bevy::{ecs::query::QueryData, prelude::*, render::render_resource::encase::rts_array::Length};
+use bevy_egui::{
+    egui::{self, ScrollArea},
+    EguiContexts,
+};
 use bitfield::bitfield;
 pub use pattern_buffer::{
     draw_pattern_buffer, init_pattern_buffer, pattern_gui, update_pattern_buffer,
@@ -11,6 +14,9 @@ use crate::{
     mem::Mem,
 };
 
+use oam::{Oam, OamEntry};
+
+mod oam;
 mod palette;
 mod pattern_buffer;
 mod screen_buffer;
@@ -52,7 +58,8 @@ bitfield! {
     pub increment_mode, set_increment_mode: 2;
     pub pattern_sprite, set_pattern_sprite: 3;
     pub pattern_background, set_pattern_background: 4;
-    pub slave_mode, set_slave_mode: 5;
+    pub sprite_size, set_sprite_size: 5;
+    pub slave_mode, set_slave_mode: 6;
     pub nmi, set_nmi: 7;
 }
 
@@ -93,12 +100,35 @@ impl Default for LoopyRegister {
     }
 }
 
+#[derive(Default)]
+pub struct ScanlineSprites {
+    sprites: [OamEntry; 8],
+    length: u8,
+}
+
+impl ScanlineSprites {
+    fn clear(&mut self) {
+        self.length = 0;
+        self.sprites.fill(OamEntry(0xFFFFFFFF));
+    }
+
+    fn add_sprite(&mut self, sprite: OamEntry) {
+        if self.length < 8 {
+            let old_sprite = unsafe { self.sprites.get_unchecked_mut(self.length as usize) };
+            *old_sprite = sprite;
+        }
+        self.length += 1;
+    }
+}
+
 #[derive(Component)]
 pub struct Ppu {
     pub screen_buffer: [[u8; 256]; 240],
     registers: PpuRegisters,
     name_table: [Mem<0x400>; 2],
     palette_table: [u8; 0x20],
+    oam: Oam,
+    scanline_sprites: ScanlineSprites,
     cycle: i16,
     scanline: i16,
     frame_complete: bool,
@@ -116,6 +146,8 @@ pub struct Ppu {
     bg_shifter_pattern_hi: u16,
     bg_shifter_attrib_lo: u16,
     bg_shifter_attrib_hi: u16,
+    sprite_shifter_pattern_lo: [u8; 8],
+    sprite_shifter_pattern_hi: [u8; 8],
 }
 
 impl Default for Ppu {
@@ -125,6 +157,8 @@ impl Default for Ppu {
             registers: PpuRegisters::default(),
             name_table: [Mem::<0x400>::default(), Mem::<0x400>::default()],
             palette_table: [0; 0x20],
+            oam: Oam::default(),
+            scanline_sprites: ScanlineSprites::default(),
             cycle: 0,
             scanline: 0,
             frame_complete: false,
@@ -142,6 +176,8 @@ impl Default for Ppu {
             bg_shifter_pattern_hi: 0x0000,
             bg_shifter_attrib_lo: 0x0000,
             bg_shifter_attrib_hi: 0x0000,
+            sprite_shifter_pattern_lo: [0x00; 8],
+            sprite_shifter_pattern_hi: [0x00; 8],
         }
     }
 }
@@ -215,6 +251,17 @@ impl Ppu {
             self.bg_shifter_attrib_lo <<= 1;
             self.bg_shifter_attrib_hi <<= 1;
         }
+        if self.registers.mask.render_sprites() && self.cycle >= 1 && self.cycle < 258 {
+            for i in 0..self.scanline_sprites.length {
+                let sprite = unsafe { self.scanline_sprites.sprites.get_unchecked_mut(i as usize) };
+                if sprite.x() > 0 {
+                    sprite.set_x(sprite.x() - 1);
+                } else {
+                    self.sprite_shifter_pattern_lo[i as usize] <<= 1;
+                    self.sprite_shifter_pattern_hi[i as usize] <<= 1;
+                }
+            }
+        }
     }
 }
 
@@ -256,6 +303,9 @@ impl<'w> PpuQueryItem<'w> {
             }
             if self.ppu.scanline == -1 && self.ppu.cycle == 1 {
                 self.ppu.registers.status.set_vblank(false);
+                self.ppu.registers.status.set_sprite_overflow(false);
+                self.ppu.sprite_shifter_pattern_lo.fill(0x00);
+                self.ppu.sprite_shifter_pattern_hi.fill(0x00);
             }
             if (self.ppu.cycle >= 2 && self.ppu.cycle < 258)
                 || (self.ppu.cycle >= 321 && self.ppu.cycle < 338)
@@ -317,6 +367,88 @@ impl<'w> PpuQueryItem<'w> {
             if self.ppu.scanline == -1 && self.ppu.cycle >= 280 && self.ppu.cycle < 305 {
                 self.ppu.transfer_addr_y();
             }
+            if self.ppu.cycle == 257 && self.ppu.scanline >= 0 {
+                self.ppu.scanline_sprites.clear();
+                let entries = self
+                    .ppu
+                    .oam
+                    .iter()
+                    .filter(|entry| {
+                        let diff = self.ppu.scanline - (entry.y() as i16);
+                        let sprite_size = if self.ppu.registers.ctrl.sprite_size() {
+                            16
+                        } else {
+                            8
+                        };
+                        (diff >= 0) && diff < sprite_size
+                    })
+                    .take(9)
+                    .copied()
+                    .collect::<Vec<_>>();
+                self.ppu
+                    .registers
+                    .status
+                    .set_sprite_overflow(entries.length() > 8);
+                entries
+                    .into_iter()
+                    .take(8)
+                    .for_each(|entry| self.ppu.scanline_sprites.add_sprite(entry));
+            }
+            if self.ppu.cycle == 340 {
+                for i in 0..self.ppu.scanline_sprites.length {
+                    let sprite = self.ppu.scanline_sprites.sprites[i as usize];
+                    let sprite_pattern_addr_lo = if !self.ppu.registers.ctrl.sprite_size() {
+                        if sprite.attribute() & 0x80 == 0x00 {
+                            ((self.ppu.registers.ctrl.pattern_sprite() as u16) << 12)
+                                | ((sprite.tile_id() as u16) << 4)
+                                | ((self.ppu.scanline as u16) - (sprite.y() as u16))
+                        } else {
+                            ((self.ppu.registers.ctrl.pattern_sprite() as u16) << 12)
+                                | ((sprite.tile_id() as u16) << 4)
+                                | (7 - ((self.ppu.scanline as u16) - (sprite.y() as u16)))
+                        }
+                    } else {
+                        if sprite.attribute() & 0x80 == 0x00 {
+                            if (self.ppu.scanline as u16) - (sprite.y() as u16) < 8 {
+                                (((sprite.tile_id() as u16) & 0x01) << 12)
+                                    | (((sprite.tile_id() as u16) & 0xFE) << 4)
+                                    | (((self.ppu.scanline as u16) - (sprite.y() as u16)) & 0x07)
+                            } else {
+                                (((sprite.tile_id() as u16) & 0x01) << 12)
+                                    | ((((sprite.tile_id() as u16) & 0xFE) + 1) << 4)
+                                    | (((self.ppu.scanline as u16) - (sprite.y() as u16)) & 0x07)
+                            }
+                        } else {
+                            if (self.ppu.scanline as u16) - (sprite.y() as u16) < 8 {
+                                (((sprite.tile_id() as u16) & 0x01) << 12)
+                                    | ((((sprite.tile_id() as u16) & 0xFE) + 1) << 4)
+                                    | (7 - (((self.ppu.scanline as u16) - (sprite.y() as u16))
+                                        & 0x07))
+                            } else {
+                                (((sprite.tile_id() as u16) & 0x01) << 12)
+                                    | (((sprite.tile_id() as u16) & 0xFE) << 4)
+                                    | (7 - (((self.ppu.scanline as u16) - (sprite.y() as u16))
+                                        & 0x07))
+                            }
+                        }
+                    };
+                    let sprite_pattern_addr_hi = sprite_pattern_addr_lo.wrapping_add(8);
+                    let (sprite_pattern_bits_lo, sprite_pattern_bits_hi) =
+                        if sprite.attribute() & 0x40 != 0 {
+                            (
+                                self.ppu_read(sprite_pattern_addr_lo).reverse_bits(),
+                                self.ppu_read(sprite_pattern_addr_hi).reverse_bits(),
+                            )
+                        } else {
+                            (
+                                self.ppu_read(sprite_pattern_addr_lo),
+                                self.ppu_read(sprite_pattern_addr_hi),
+                            )
+                        };
+                    self.ppu.sprite_shifter_pattern_lo[i as usize] = sprite_pattern_bits_lo;
+                    self.ppu.sprite_shifter_pattern_hi[i as usize] = sprite_pattern_bits_hi;
+                }
+            }
         }
 
         if self.ppu.scanline == 240 {}
@@ -343,12 +475,41 @@ impl<'w> PpuQueryItem<'w> {
             (0x00, 0x00)
         };
 
-        let color = self.get_color_from_ram(bg_palette, bg_pixel);
-        self.set_pixel(self.ppu.cycle.wrapping_sub(1), self.ppu.scanline, color);
+        let (fg_pixel, fg_palette, fg_priority) = if self.ppu.registers.mask.render_sprites() {
+            (0..self.ppu.scanline_sprites.length)
+                .into_iter()
+                .map(|i| {
+                    let sprite = self.ppu.scanline_sprites.sprites[i as usize];
+                    if sprite.x() == 0 {
+                        let px0 =
+                            ((self.ppu.sprite_shifter_pattern_lo[i as usize] & 0x80) > 0) as u8;
+                        let px1 =
+                            ((self.ppu.sprite_shifter_pattern_hi[i as usize] & 0x80) > 0) as u8;
+                        let fg_pixel = px0 | (px1 << 1);
 
-        if self.ppu.frame_complete {
-            self.ppu.frame_complete = false;
-        }
+                        let fg_palette = ((sprite.attribute() & 0x03) + 0x04) as u8;
+                        let fg_priority = (sprite.attribute() & 0x20) == 0;
+                        (fg_pixel, fg_palette, fg_priority)
+                    } else {
+                        (0x00, 0x00, false)
+                    }
+                })
+                .find(|&(fg_pixel, _, _)| fg_pixel != 0)
+                .unwrap_or((0x00, 0x00, false))
+        } else {
+            (0x00, 0x00, false)
+        };
+
+        let (pixel, palette) = match (bg_pixel, fg_pixel, fg_priority) {
+            (0x00, 0x00, _) => (0x00, 0x00),
+            (0x00, fg_pixel, _) => (fg_pixel, fg_palette),
+            (bg_pixel, 0x00, _) => (bg_pixel, bg_palette),
+            (_, fg_pixel, false) => (fg_pixel, fg_palette),
+            (bg_pixel, _, true) => (bg_pixel, bg_palette),
+        };
+
+        let color = self.get_color_from_ram(palette, pixel);
+        self.set_pixel(self.ppu.cycle.wrapping_sub(1), self.ppu.scanline, color);
 
         self.ppu.cycle = self.ppu.cycle.wrapping_add(1);
         if self.ppu.cycle >= 341 {
@@ -387,6 +548,7 @@ impl<'w> PpuQueryItem<'w> {
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
         match addr {
             0x2000..=0x3FFF => self.ppu_register_write(addr, data),
+            0x4014 => {}
             0x4020..=0xFFFF => {
                 if let Some(cartridge) = &mut self.cartridge {
                     cartridge.cpu_write(addr, data);
@@ -564,6 +726,10 @@ impl<'w> PpuQueryItem<'w> {
             _ => {}
         }
     }
+
+    pub fn oam_write(&mut self, addr: u8, data: u8) {
+        self.ppu.oam.write_byte(addr, data);
+    }
 }
 
 impl<'w> PpuQueryReadOnlyItem<'w> {
@@ -699,6 +865,28 @@ pub fn ppu_gui(query: Query<PpuQuery>, mut contexts: EguiContexts) {
                         ui.end_row();
                     }
                 });
+        } else {
+            ui.label("No PPU found");
+        }
+    });
+}
+
+pub fn oam_gui(query: Query<PpuQuery>, mut contexts: EguiContexts) {
+    egui::Window::new("OAM Memory").show(&contexts.ctx_mut(), |ui| {
+        if let Ok(query) = query.get_single() {
+            let text_style = egui::TextStyle::Monospace;
+            let row_height = ui.text_style_height(&text_style);
+            let total_rows = 64;
+            ui.push_id("wram", |ui| {
+                ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .max_height(200.0)
+                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                        for row in row_range {
+                            ui.monospace(format!("{}", query.ppu.oam.get_entry(row as u8)));
+                        }
+                    });
+            });
         } else {
             ui.label("No PPU found");
         }

@@ -3,8 +3,11 @@ use bevy_egui::{
     egui::{self, ScrollArea, Separator},
     EguiContexts,
 };
+pub use dma::{Dma, DmaStatus};
 
-use crate::ppu::PpuQuery;
+use crate::{apu::Apu, ppu::PpuQuery};
+
+mod dma;
 
 #[derive(Component, Default)]
 pub struct Controller {
@@ -28,9 +31,9 @@ pub fn update_controller_state(mut query: Query<&mut Controller>, keys: Res<Butt
     if let Ok(mut controller) = query.get_single_mut() {
         controller.state = 0x00;
         keys.get_pressed().for_each(|key| match key {
-            KeyCode::KeyW => controller.state |= 0x80, // A
+            KeyCode::KeyZ => controller.state |= 0x80, // A
             KeyCode::KeyX => controller.state |= 0x40, // B
-            KeyCode::KeyQ => controller.state |= 0x20, // select
+            KeyCode::KeyA => controller.state |= 0x20, // select
             KeyCode::KeyS => controller.state |= 0x10, // start
             KeyCode::ArrowUp => controller.state |= 0x08,
             KeyCode::ArrowDown => controller.state |= 0x04,
@@ -65,8 +68,10 @@ impl Wram {
 #[query_data(mutable)]
 pub struct CpuBusQuery {
     wram: &'static mut Wram,
+    dma: &'static mut Dma,
     controller: &'static mut Controller,
     ppu: PpuQuery,
+    apu: &'static mut Apu,
 }
 
 impl<'w> CpuBusQueryReadOnlyItem<'w> {
@@ -93,8 +98,17 @@ impl<'w> CpuBusQueryItem<'w> {
         self.ppu.nmi()
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, cycles: usize) {
         self.ppu.tick();
+        self.apu.tick(cycles);
+    }
+
+    pub fn dma(&self) -> DmaStatus {
+        self.dma.status
+    }
+
+    pub fn start_dma(&mut self) {
+        self.dma.status = DmaStatus::Transfering;
     }
 
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
@@ -109,11 +123,32 @@ impl<'w> CpuBusQueryItem<'w> {
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
         match addr {
             0x0000..=0x1FFF => self.wram.write(addr, data),
-            0x2000..=0x3FFF => self.ppu.cpu_write(addr, data),
-            0x4016 | 0x4017 => self.controller.store_shifter(),
+            0x2000..=0x3FFF => {
+                self.ppu.cpu_write(addr, data);
+            }
+            0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.cpu_write(addr, data),
+            0x4014 => {
+                self.dma.page = data;
+                self.dma.addr = 0x00;
+                self.dma.status = DmaStatus::Idling;
+            }
+            0x4016 => self.controller.store_shifter(),
             0x4020..=0xFFFF => self.ppu.cpu_write(addr, data),
             _ => {}
         };
+    }
+
+    pub fn dma_read(&mut self) {
+        let data = self.cpu_read(((self.dma.page as u16) << 8) | (self.dma.addr as u16));
+        self.dma.data = data.unwrap_or(0x00);
+    }
+
+    pub fn dma_write(&mut self) {
+        self.ppu.oam_write(self.dma.addr, self.dma.data);
+        self.dma.addr = self.dma.addr.wrapping_add(1);
+        if self.dma.addr == 0x00 {
+            self.dma.status = DmaStatus::Inactive;
+        }
     }
 }
 

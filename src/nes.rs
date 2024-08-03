@@ -2,9 +2,10 @@ use bevy::prelude::*;
 use clap::Parser;
 
 use crate::{
+    apu::{Apu, ApuPlugin},
     cartridge::Cartridge,
     cpu::{Cpu, CpuPlugin, SystemClock},
-    cpu_bus::{update_controller_state, Controller, Wram},
+    cpu_bus::{update_controller_state, Controller, Dma, Wram},
     ppu::{PalettePlugin, Ppu, PpuPlugin},
 };
 
@@ -16,8 +17,10 @@ pub struct NesBundle {
     marker: NesMarker,
     system_clock: SystemClock,
     cpu: Cpu,
+    dma: Dma,
     wram: Wram,
     ppu: Ppu,
+    apu: Apu,
     controller: Controller,
 }
 
@@ -42,7 +45,7 @@ impl NesPlugin {
 impl Plugin for NesPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.args.clone())
-            .add_plugins((CpuPlugin, PpuPlugin, PalettePlugin))
+            .add_plugins((CpuPlugin, PpuPlugin, PalettePlugin, ApuPlugin))
             .add_systems(Startup, init_nes)
             .add_systems(Update, update_controller_state);
     }

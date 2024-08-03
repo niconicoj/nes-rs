@@ -1,2 +1,6 @@
 /target
 /assets/roms
+*.svg
+perf.*
+*.log
+.idea

@@ -1,6 +1,6 @@
-use std::fmt::UpperHex;
+use std::{fmt::UpperHex, time::Duration};
 
-use crate::cpu_bus::CpuBusQuery;
+use crate::cpu_bus::{CpuBusQuery, DmaStatus};
 use addr_mode::AddrMode;
 use bevy::{ecs::query::QueryData, prelude::*, utils::HashSet};
 use bevy_egui::{
@@ -14,6 +14,8 @@ mod addr_mode;
 mod instr;
 mod op;
 
+const MASTER_CLOCK_HZ: f64 = 21_477_272.0;
+
 #[derive(Component)]
 pub struct SystemClock {
     enabled: bool,
@@ -26,7 +28,10 @@ impl Default for SystemClock {
         Self {
             enabled: false,
             cycles: 0,
-            timer: Timer::from_seconds(1.0 / 60.0, TimerMode::Repeating),
+            timer: Timer::new(
+                Duration::from_secs_f64(1.0 / (MASTER_CLOCK_HZ / 4.0)),
+                TimerMode::Repeating,
+            ),
         }
     }
 }
@@ -163,36 +168,6 @@ impl<'w> CpuQueryReadOnlyItem<'w> {
     }
 }
 
-enum Operand {
-    Unary,
-    Byte(u8),
-    Word(u16),
-}
-
-impl Operand {
-    fn len(&self) -> u16 {
-        match self {
-            Operand::Byte(_) => 1,
-            Operand::Word(_) => 2,
-            Operand::Unary => 0,
-        }
-    }
-}
-
-impl UpperHex for Operand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Operand::Byte(val) => format!("{:#06X}", val),
-                Operand::Word(val) => format!("{:#06X}", val),
-                Operand::Unary => "".to_string(),
-            }
-        )
-    }
-}
-
 impl<'w> CpuQueryItem<'w> {
     pub fn next_frame(&mut self, breakpoints: Option<&BreakPointState>) -> bool {
         while !self.bus.frame_complete() {
@@ -207,9 +182,18 @@ impl<'w> CpuQueryItem<'w> {
     }
     pub fn clock(&mut self) {
         self.clock.cycles += 1;
-        self.bus.tick();
+        self.bus.tick(self.clock.cycles);
         if self.clock.cycles % 3 == 0 {
-            self.tick();
+            if self.bus.dma() == DmaStatus::Inactive {
+                self.tick();
+            } else {
+                match (self.bus.dma(), self.clock.cycles % 2 == 0) {
+                    (DmaStatus::Idling, odd_cycle) if odd_cycle => self.bus.start_dma(),
+                    (DmaStatus::Transfering, odd_cycle) if !odd_cycle => self.bus.dma_read(),
+                    (DmaStatus::Transfering, odd_cycle) if odd_cycle => self.bus.dma_write(),
+                    _ => {}
+                }
+            }
         }
         if self.bus.nmi() {
             self.nmi();
@@ -311,7 +295,8 @@ impl Plugin for CpuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BreakPointState>()
             .insert_resource(BreakPointState::default())
-            .add_systems(Update, cpu_loop);
+            .insert_resource(Time::<Fixed>::from_hz(240.0))
+            .add_systems(FixedUpdate, run_emulation);
     }
 }
 
@@ -439,14 +424,42 @@ pub fn disassembly_gui(
     });
 }
 
-fn cpu_loop(mut query: Query<CpuQuery>, breakpoints: Res<BreakPointState>, time: Res<Time>) {
+enum Operand {
+    Unary,
+    Byte(u8),
+    Word(u16),
+}
+
+impl Operand {
+    fn len(&self) -> u16 {
+        match self {
+            Operand::Byte(_) => 1,
+            Operand::Word(_) => 2,
+            Operand::Unary => 0,
+        }
+    }
+}
+
+impl UpperHex for Operand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Operand::Byte(val) => format!("{:#06X}", val),
+                Operand::Word(val) => format!("{:#06X}", val),
+                Operand::Unary => "".to_string(),
+            }
+        )
+    }
+}
+
+fn run_emulation(mut query: Query<CpuQuery>, time: Res<Time>) {
     if let Ok(mut query) = query.get_single_mut() {
         if query.clock.enabled {
             query.clock.timer.tick(time.delta());
-            if query.clock.timer.finished() {
-                if query.next_frame(Some(&breakpoints)) {
-                    query.clock.enabled = false;
-                }
+            for _ in 0..query.clock.timer.times_finished_this_tick() as usize {
+                query.clock();
             }
         }
     }

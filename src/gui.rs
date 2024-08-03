@@ -5,7 +5,10 @@ use crate::{
     cartridge::cartridge_gui,
     cpu::{cpu_gui, disassembly_gui},
     cpu_bus::wram_gui,
-    ppu::{draw_pattern_buffer, init_pattern_buffer, pattern_gui, ppu_gui, update_pattern_buffer},
+    ppu::{
+        draw_pattern_buffer, init_pattern_buffer, oam_gui, pattern_gui, ppu_gui,
+        update_pattern_buffer,
+    },
 };
 
 pub struct GuiPlugin;
@@ -24,6 +27,7 @@ impl Plugin for GuiPlugin {
                     cartridge_gui.run_if(cartridge_gui_enabled),
                     ppu_gui.run_if(ppu_gui_enabled),
                     pattern_gui.run_if(pattern_gui_enabled),
+                    oam_gui.run_if(oam_gui_enabled),
                 )
                     .run_if(input_toggle_active(false, KeyCode::KeyU)),
             )
@@ -46,6 +50,7 @@ pub struct GuiState {
     cartridge: bool,
     ppu: bool,
     pattern: bool,
+    oam: bool,
 }
 
 fn cpu_gui_enabled(state: Res<GuiState>) -> bool {
@@ -70,6 +75,10 @@ fn ppu_gui_enabled(state: Res<GuiState>) -> bool {
 
 fn pattern_gui_enabled(state: Res<GuiState>) -> bool {
     state.pattern
+}
+
+fn oam_gui_enabled(state: Res<GuiState>) -> bool {
+    state.oam
 }
 
 fn side_panel(mut contexts: EguiContexts, mut state: ResMut<GuiState>) {
@@ -103,6 +112,9 @@ fn side_panel(mut contexts: EguiContexts, mut state: ResMut<GuiState>) {
                     .clicked()
                 {
                     state.pattern = !state.pattern;
+                }
+                if ui.selectable_label(state.oam, "OAM Memory").clicked() {
+                    state.oam = !state.oam;
                 }
             });
         });
