@@ -11,6 +11,7 @@ struct PulseMarker<const ID: usize>;
 struct PulseVar<const ID: usize> {
     hz: Shared,
     duty: Shared,
+    volume: Shared,
 }
 
 #[derive(Resource)]
@@ -20,14 +21,16 @@ struct PulseDsp {
     uuid: Uuid,
     hz: Shared,
     duty: Shared,
+    volume: Shared,
 }
 
 impl PulseDsp {
-    fn new(hz: Shared, duty: Shared) -> Self {
+    fn new(hz: Shared, duty: Shared, volume: Shared) -> Self {
         Self {
             uuid: Uuid::new_v4(),
             hz,
             duty,
+            volume,
         }
     }
 }
@@ -38,7 +41,9 @@ impl DspGraph for PulseDsp {
     }
 
     fn generate_graph(&self) -> Box<dyn AudioUnit> {
-        Box::new((var(&self.hz) | var(&self.duty)) >> pulse() >> split::<U2>() * 0.3)
+        Box::new(
+            (var(&self.hz) | var(&self.duty)) >> pulse() * var(&self.volume) >> split::<U2>() * 0.3,
+        )
     }
 }
 
@@ -48,12 +53,14 @@ impl<const ID: usize> Plugin for PulsePlugin<ID> {
     fn build(&self, app: &mut App) {
         let hz = shared(440.0);
         let duty = shared(0.5);
+        let volume = shared(1.0);
         let pulse_var = PulseVar::<ID> {
             hz: hz.clone(),
             duty: duty.clone(),
+            volume: volume.clone(),
         };
 
-        let pulse_dsp = PulseDsp::new(hz.clone(), duty.clone());
+        let pulse_dsp = PulseDsp::new(hz.clone(), duty.clone(), volume.clone());
         let pulse_id = pulse_dsp.id();
 
         app.add_dsp_source(pulse_dsp, SourceType::Dynamic)
@@ -94,10 +101,11 @@ fn update_pulse<const ID: usize>(
     pulse_var: Res<PulseVar<ID>>,
 ) {
     if let (Ok(apu), Ok((sink, _))) = (apu.get_single(), sink.get_single()) {
-        let pulse_register = &apu.pulse[ID];
-        let hz = CPU_HZ / ((16 * (pulse_register.timer() + 1)) as f32);
+        let pulse = &apu.pulse[ID];
+        let hz = CPU_HZ / ((16 * (pulse.reg.timer() + 1)) as f32);
         let period = CPU_HZ / (16.0 * hz) - 1.0;
-        let duty = match pulse_register.duty() {
+        let volume = (pulse.volume as f32) / 15.0;
+        let duty = match pulse.reg.duty() {
             0 => 0.125,
             1 => 0.25,
             2 => 0.5,
@@ -106,13 +114,14 @@ fn update_pulse<const ID: usize>(
         };
         pulse_var.hz.set(hz);
         pulse_var.duty.set(duty);
+        pulse_var.volume.set(volume);
         let enabled = apu.status.pulse() & (1 << ID) != 0;
 
         debug!(
-            "Pulse {}: enabled={}, hz={}, duty={}, period={}",
-            ID, enabled, hz, duty, period
+            "Pulse {}: lc={}, hz={}, duty={}, T={}",
+            ID, pulse.length_counter, hz, duty, period
         );
-        if !enabled || period < 8.0 {
+        if pulse.length_counter == 0 || !enabled || period < 8.0 {
             sink.pause();
         } else {
             sink.play();
