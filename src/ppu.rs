@@ -138,6 +138,8 @@ pub struct Ppu {
     vram_addr: LoopyRegister,
     tram_addr: LoopyRegister,
     fine_x: u8,
+    sprite_zero_possible: bool,
+    sprite_zero_rendering: bool,
     bg_next_tile_id: u8,
     bg_next_tile_attrib: u8,
     bg_next_tile_lsb: u8,
@@ -168,6 +170,8 @@ impl Default for Ppu {
             vram_addr: LoopyRegister::default(),
             tram_addr: LoopyRegister::default(),
             fine_x: 0,
+            sprite_zero_possible: false,
+            sprite_zero_rendering: false,
             bg_next_tile_id: 0x00,
             bg_next_tile_attrib: 0x00,
             bg_next_tile_lsb: 0x00,
@@ -303,6 +307,7 @@ impl<'w> PpuQueryItem<'w> {
             }
             if self.ppu.scanline == -1 && self.ppu.cycle == 1 {
                 self.ppu.registers.status.set_vblank(false);
+                self.ppu.registers.status.set_sprite_zero_hit(false);
                 self.ppu.registers.status.set_sprite_overflow(false);
                 self.ppu.sprite_shifter_pattern_lo.fill(0x00);
                 self.ppu.sprite_shifter_pattern_hi.fill(0x00);
@@ -369,30 +374,30 @@ impl<'w> PpuQueryItem<'w> {
             }
             if self.ppu.cycle == 257 && self.ppu.scanline >= 0 {
                 self.ppu.scanline_sprites.clear();
-                let entries = self
-                    .ppu
-                    .oam
-                    .iter()
-                    .filter(|entry| {
-                        let diff = self.ppu.scanline - (entry.y() as i16);
-                        let sprite_size = if self.ppu.registers.ctrl.sprite_size() {
-                            16
+                self.ppu.sprite_zero_possible = false;
+                for entry_id in 0..64 {
+                    if self.ppu.scanline_sprites.length == 8
+                        && self.ppu.registers.status.sprite_overflow()
+                    {
+                        break;
+                    }
+                    let entry = self.ppu.oam.get_entry(entry_id);
+                    let diff = self.ppu.scanline - (entry.y() as i16);
+                    let sprite_size = match self.ppu.registers.ctrl.sprite_size() {
+                        true => 16,
+                        false => 8,
+                    };
+                    if (diff >= 0) && diff < sprite_size {
+                        if entry_id == 0 {
+                            self.ppu.sprite_zero_possible = true;
+                        }
+                        if self.ppu.scanline_sprites.length < 8 {
+                            self.ppu.scanline_sprites.add_sprite(entry);
                         } else {
-                            8
-                        };
-                        (diff >= 0) && diff < sprite_size
-                    })
-                    .take(9)
-                    .copied()
-                    .collect::<Vec<_>>();
-                self.ppu
-                    .registers
-                    .status
-                    .set_sprite_overflow(entries.length() > 8);
-                entries
-                    .into_iter()
-                    .take(8)
-                    .for_each(|entry| self.ppu.scanline_sprites.add_sprite(entry));
+                            self.ppu.registers.status.set_sprite_overflow(true);
+                        }
+                    }
+                }
             }
             if self.ppu.cycle == 340 {
                 for i in 0..self.ppu.scanline_sprites.length {
@@ -476,7 +481,8 @@ impl<'w> PpuQueryItem<'w> {
         };
 
         let (fg_pixel, fg_palette, fg_priority) = if self.ppu.registers.mask.render_sprites() {
-            (0..self.ppu.scanline_sprites.length)
+            self.ppu.sprite_zero_rendering = false;
+            let v = (0..self.ppu.scanline_sprites.length)
                 .into_iter()
                 .map(|i| {
                     let sprite = self.ppu.scanline_sprites.sprites[i as usize];
@@ -494,8 +500,16 @@ impl<'w> PpuQueryItem<'w> {
                         (0x00, 0x00, false)
                     }
                 })
-                .find(|&(fg_pixel, _, _)| fg_pixel != 0)
-                .unwrap_or((0x00, 0x00, false))
+                .enumerate()
+                .find(|(_, (fg_pixel, _, _))| fg_pixel != &0);
+            if let Some((i, result)) = v {
+                if i == 0 {
+                    self.ppu.sprite_zero_rendering = true;
+                }
+                result
+            } else {
+                (0x00, 0x00, false)
+            }
         } else {
             (0x00, 0x00, false)
         };
@@ -507,6 +521,24 @@ impl<'w> PpuQueryItem<'w> {
             (_, fg_pixel, false) => (fg_pixel, fg_palette),
             (bg_pixel, _, true) => (bg_pixel, bg_palette),
         };
+
+        if self.ppu.sprite_zero_rendering
+            && self.ppu.sprite_zero_possible
+            && self.ppu.registers.mask.render_background()
+            && self.ppu.registers.mask.render_sprites()
+        {
+            if !(self.ppu.registers.mask.render_background_left()
+                || self.ppu.registers.mask.render_sprite_left())
+            {
+                if self.ppu.cycle >= 9 && self.ppu.cycle < 258 {
+                    self.ppu.registers.status.set_sprite_zero_hit(true);
+                }
+            } else {
+                if self.ppu.cycle >= 1 && self.ppu.cycle < 258 {
+                    self.ppu.registers.status.set_sprite_zero_hit(true);
+                }
+            }
+        }
 
         let color = self.get_color_from_ram(palette, pixel);
         self.set_pixel(self.ppu.cycle.wrapping_sub(1), self.ppu.scanline, color);

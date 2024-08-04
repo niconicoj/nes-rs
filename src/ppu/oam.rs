@@ -28,20 +28,6 @@ pub struct Oam {
     entries: [OamEntry; 64],
 }
 
-pub struct OamIterator<'a> {
-    oam: &'a Oam,
-    index: usize,
-}
-
-impl<'a> Iterator for OamIterator<'a> {
-    type Item = &'a OamEntry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.index += 1;
-        self.oam.entries.get(self.index - 1)
-    }
-}
-
 impl Default for Oam {
     fn default() -> Self {
         Self {
@@ -51,12 +37,6 @@ impl Default for Oam {
 }
 
 impl Oam {
-    pub fn iter(&self) -> OamIterator {
-        OamIterator {
-            oam: self,
-            index: 0,
-        }
-    }
     pub fn get_entry(&self, index: u8) -> OamEntry {
         let index = index & 0x3F;
         unsafe { OamEntry(self.entries.get_unchecked(index as usize).0) }
