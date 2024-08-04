@@ -102,8 +102,7 @@ fn update_pulse<const ID: usize>(
 ) {
     if let (Ok(apu), Ok((sink, _))) = (apu.get_single(), sink.get_single()) {
         let pulse = &apu.pulse[ID];
-        let hz = CPU_HZ / ((16 * (pulse.reg.timer() + 1)) as f32);
-        let period = CPU_HZ / (16.0 * hz) - 1.0;
+        let hz = CPU_HZ / (16.0 * ((pulse.current_period as f32) + 1.0));
         let volume = (pulse.volume as f32) / 15.0;
         let duty = match pulse.reg.duty() {
             0 => 0.125,
@@ -117,11 +116,7 @@ fn update_pulse<const ID: usize>(
         pulse_var.volume.set(volume);
         let enabled = apu.status.pulse() & (1 << ID) != 0;
 
-        debug!(
-            "Pulse {}: lc={}, hz={}, duty={}, T={}",
-            ID, pulse.length_counter, hz, duty, period
-        );
-        if pulse.length_counter == 0 || !enabled || period < 8.0 {
+        if pulse.envelope_counter == 0 || !enabled || pulse.mute {
             sink.pause();
         } else {
             sink.play();

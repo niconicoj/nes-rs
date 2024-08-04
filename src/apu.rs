@@ -21,10 +21,10 @@ bitfield! {
     length_counter_halt, set_length_counter_halt: 5, 5;
     envelope_loop, set_envelope_loop: 5, 5;
     duty, set_duty: 7, 6;
-    shift, set_shift: 10, 8;
+    shift_amount, set_shift_amount: 10, 8;
     negate, set_negate: 11, 11;
     sweep_period, set_sweep_period: 14, 12;
-    enabled, set_enabled: 15, 15;
+    sweep_enabled, set_sweep_enabled: 15, 15;
     timer, set_timer: 26, 16;
     length_counter, set_length_counter: 31, 27;
 }
@@ -32,32 +32,50 @@ bitfield! {
 #[derive(Default)]
 struct Pulse {
     reg: PulseRegister,
-    length_counter: u8,
-    start_flag: bool,
+    current_period: u32,
+    target_period: u32,
     volume: u8,
+    mute: bool,
+    // envelope
+    envelope_reload: bool,
     decay_level: u8,
-    divider_counter: u8,
-    divider_period: u8,
+    envelope_divider: u8,
+    envelope_counter: u8,
+    envelope_period: u8,
+    // sweep
+    sweep_reload: bool,
+    sweep_counter: u8,
 }
 
 impl Pulse {
+    fn update_period(&mut self) {
+        self.current_period = self.reg.timer();
+        let change_amount = self.reg.timer() >> self.reg.shift_amount();
+        self.target_period = if self.reg.negate() != 0 {
+            self.current_period - change_amount
+        } else {
+            self.current_period + change_amount
+        };
+        self.mute = self.target_period > 0x7FF || self.current_period < 0x08;
+    }
+
     fn clock_length_counter(&mut self) {
         if self.reg.length_counter_halt() == 0 {
-            let next_length = self.length_counter.saturating_sub(1);
-            self.length_counter = next_length;
+            let next_length = self.envelope_counter.saturating_sub(1);
+            self.envelope_counter = next_length;
         }
     }
 
     fn clock_envelope(&mut self) {
-        if self.start_flag {
+        if self.envelope_reload {
             self.decay_level = 15;
-            self.divider_counter = 15;
-            self.divider_period = self.reg.volume() as u8;
+            self.envelope_divider = 15;
+            self.envelope_period = self.reg.volume() as u8;
         } else {
-            self.divider_counter = self
-                .divider_counter
-                .saturating_sub(15 - self.divider_period);
-            if self.divider_counter != 0 {
+            self.envelope_divider = self
+                .envelope_divider
+                .saturating_sub(15 - self.envelope_period);
+            if self.envelope_divider != 0 {
                 if self.decay_level != 0 {
                     self.decay_level = self.decay_level.saturating_sub(1);
                 } else {
@@ -69,6 +87,21 @@ impl Pulse {
             self.volume = self.reg.volume() as u8;
         } else {
             self.volume = self.decay_level;
+        }
+    }
+
+    fn clock_sweep(&mut self) {
+        if self.reg.sweep_enabled() != 0 && self.sweep_counter == 0 && self.reg.shift_amount() != 0
+        {
+            if !self.mute {
+                self.reg.set_timer(self.target_period);
+            }
+        }
+        if self.sweep_reload || self.sweep_counter == 0 {
+            self.sweep_counter = self.reg.sweep_period() as u8;
+            self.sweep_reload = false;
+        } else {
+            self.sweep_counter -= 1;
         }
     }
 }
@@ -156,6 +189,8 @@ impl Apu {
                 }
                 _ => {}
             };
+            self.pulse[0].update_period();
+            self.pulse[1].update_period();
         }
 
         false
@@ -173,6 +208,7 @@ impl Apu {
         for pulse_id in 0..=1 {
             if (self.status.pulse() >> pulse_id) & 1 != 0 {
                 self.pulse[pulse_id].clock_length_counter();
+                self.pulse[pulse_id].clock_sweep();
             }
         }
     }
@@ -181,24 +217,30 @@ impl Apu {
         match addr {
             0x4000 | 0x4004 => {
                 let pulse_id = ((addr >> 2) & 1) as usize;
-                let offset = (addr & 0x03) * 8;
-                let data = (data as u32) << offset;
-                self.pulse[pulse_id].reg.0 &= !(0xFF << offset);
-                self.pulse[pulse_id].reg.0 |= data;
+                self.pulse[pulse_id].reg.0 &= !0xFF;
+                self.pulse[pulse_id].reg.0 |= data as u32;
 
                 if (self.status.pulse() >> pulse_id) & 1 != 0 {
-                    self.pulse[pulse_id].start_flag = true;
-                    self.pulse[pulse_id].length_counter =
+                    self.pulse[pulse_id].envelope_reload = true;
+                    self.pulse[pulse_id].envelope_counter =
                         LENGTH_COUNTER_TABLE[self.pulse[pulse_id].reg.length_counter() as usize];
                 }
             }
-            0x4001..=0x4003 => {
+            0x4001 | 0x4005 => {
+                let pulse_id = ((addr >> 2) & 1) as usize;
+                self.pulse[pulse_id].reg.0 &= !(0xFFu32 << 8);
+                self.pulse[pulse_id].reg.0 |= (data as u32) << 8;
+                if (self.status.pulse() >> pulse_id) & 1 != 0 {
+                    self.pulse[pulse_id].sweep_reload = true;
+                }
+            }
+            0x4002..=0x4003 => {
                 let offset = (addr & 0x03) * 8;
                 let data = (data as u32) << offset;
                 self.pulse[0].reg.0 &= !(0xFF << offset);
                 self.pulse[0].reg.0 |= data;
             }
-            0x4005..=0x4007 => {
+            0x4006..=0x4007 => {
                 let offset = (addr & 0x03) * 8;
                 let data = (data as u32) << offset;
                 self.pulse[1].reg.0 &= !(0xFF << offset);
@@ -219,5 +261,22 @@ pub struct ApuPlugin;
 impl Plugin for ApuPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((PulsePlugin::<0>, PulsePlugin::<1>));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::apu::Apu;
+
+    #[test]
+    fn sweep_reg() {
+        let mut apu = Apu::default();
+        assert!(apu.pulse[0].reg.sweep_enabled() == 0);
+
+        apu.cpu_write(0x4001, 0xFF);
+        assert!(apu.pulse[0].reg.sweep_enabled() == 1);
+
+        apu.cpu_write(0x4001, 0x7F);
+        assert!(apu.pulse[0].reg.sweep_enabled() == 0);
     }
 }
