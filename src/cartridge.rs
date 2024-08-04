@@ -3,14 +3,16 @@ use std::{fs::File, io::Read};
 use bevy::prelude::*;
 use bevy_egui::egui::{ScrollArea, Separator};
 use bevy_egui::{egui, EguiContexts};
-use mapper::{MappedAddr, Mapper};
+use mapper::{MapResult, Mapper};
 
 mod dummy;
 mod mapper;
+mod mmc1;
 mod nrom;
 
 #[cfg(test)]
 pub use dummy::DummyMapper;
+use mmc1::Mmc1;
 pub use nrom::Nrom128;
 use nrom::Nrom256;
 use thiserror::Error;
@@ -31,11 +33,13 @@ pub struct CartridgeHeader {
     mirroring: Mirroring,
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone, Copy)]
 pub enum Mirroring {
     #[default]
     Horizontal,
     Vertical,
+    OneScreenLo,
+    OneScreenHi,
 }
 
 #[allow(dead_code)]
@@ -118,18 +122,19 @@ impl Cartridge {
         }
     }
 
-    pub fn mirroring(&self) -> &Mirroring {
-        &self.header.mirroring
+    pub fn mirroring(&self) -> Mirroring {
+        self.mapper.mirroring().unwrap_or(self.header.mirroring)
     }
 
     pub fn cpu_read(&self, addr: u16) -> Option<u8> {
-        self.mapper
-            .cpu_map_read(addr)
-            .map(|MappedAddr { bank, addr }| self.prg_banks[bank].read(addr))
+        self.mapper.cpu_map_read(addr).map(|result| match result {
+            MapResult::Rom { bank, addr } => self.prg_banks[bank].read(addr),
+            MapResult::Instant { data } => data,
+        })
     }
 
     pub fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
-        if let Some(MappedAddr { bank, addr }) = self.mapper.cpu_map_write(addr, data) {
+        if let Some(MapResult::Rom { bank, addr }) = self.mapper.cpu_map_write(addr, data) {
             self.prg_banks[bank].write(addr, data);
             true
         } else {
@@ -138,13 +143,14 @@ impl Cartridge {
     }
 
     pub fn ppu_read(&self, addr: u16) -> Option<u8> {
-        self.mapper
-            .ppu_map_read(addr)
-            .map(|MappedAddr { bank, addr }| self.chr_banks[bank].read(addr))
+        self.mapper.ppu_map_read(addr).map(|result| match result {
+            MapResult::Rom { bank, addr } => self.chr_banks[bank].read(addr),
+            MapResult::Instant { data } => data,
+        })
     }
 
     pub fn ppu_write(&mut self, addr: u16, data: u8) -> bool {
-        if let Some(MappedAddr { bank, addr }) = self.mapper.ppu_map_write(addr, data) {
+        if let Some(MapResult::Rom { bank, addr }) = self.mapper.ppu_map_write(addr, data) {
             self.chr_banks[bank].write(addr, data);
             true
         } else {
@@ -191,6 +197,13 @@ impl Cartridge {
         let mapper = match cartridge.mapper_id {
             0x00 if cartridge.prg_rom_banks == 1 => Box::new(Nrom128::default()) as Box<dyn Mapper>,
             0x00 if cartridge.prg_rom_banks == 2 => Box::new(Nrom256::default()) as Box<dyn Mapper>,
+            0x01 => {
+                let mmc1 = Mmc1::new(
+                    cartridge.prg_rom_banks as usize,
+                    cartridge.chr_rom_banks as usize,
+                );
+                Box::new(mmc1) as Box<dyn Mapper>
+            }
             _ => todo!("mapper {} is not implemented yet", cartridge.mapper_id),
         };
 

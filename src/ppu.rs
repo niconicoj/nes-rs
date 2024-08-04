@@ -667,6 +667,9 @@ impl<'w> PpuQueryItem<'w> {
                             let bank_id = ((addr & 0x0800) >> 11) as usize;
                             self.ppu.name_table[bank_id].read(addr)
                         }
+
+                        Some(Mirroring::OneScreenLo) => self.ppu.name_table[0].read(addr),
+                        Some(Mirroring::OneScreenHi) => self.ppu.name_table[1].read(addr),
                     },
                 }
             }
@@ -707,6 +710,12 @@ impl<'w> PpuQueryItem<'w> {
                             Some(Mirroring::Horizontal) | None => {
                                 let bank_id = ((addr & 0x0800) >> 11) as usize;
                                 self.ppu.name_table[bank_id].write(addr, data)
+                            }
+                            Some(Mirroring::OneScreenLo) => {
+                                self.ppu.name_table[0].write(addr, data)
+                            }
+                            Some(Mirroring::OneScreenHi) => {
+                                self.ppu.name_table[1].write(addr, data)
                             }
                         }
                     }

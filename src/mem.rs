@@ -1,11 +1,11 @@
 #[derive(Clone)]
 pub struct Mem<const S: usize> {
-    data: Vec<u8>,
+    data: [u8; S],
 }
 
 impl<const S: usize> Default for Mem<S> {
     fn default() -> Self {
-        Self { data: vec![0; S] }
+        Self { data: [0; S] }
     }
 }
 
