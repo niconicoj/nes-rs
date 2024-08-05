@@ -1,4 +1,4 @@
-use bevy::{ecs::query::QueryData, prelude::*, render::render_resource::encase::rts_array::Length};
+use bevy::{ecs::query::QueryData, prelude::*};
 use bevy_egui::{
     egui::{self, ScrollArea},
     EguiContexts,
@@ -518,8 +518,8 @@ impl<'w> PpuQueryItem<'w> {
             (0x00, 0x00, _) => (0x00, 0x00),
             (0x00, fg_pixel, _) => (fg_pixel, fg_palette),
             (bg_pixel, 0x00, _) => (bg_pixel, bg_palette),
-            (_, fg_pixel, false) => (fg_pixel, fg_palette),
-            (bg_pixel, _, true) => (bg_pixel, bg_palette),
+            (_, fg_pixel, true) => (fg_pixel, fg_palette),
+            (bg_pixel, _, false) => (bg_pixel, bg_palette),
         };
 
         if self.ppu.sprite_zero_rendering

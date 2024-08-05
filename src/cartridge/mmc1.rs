@@ -1,3 +1,5 @@
+use bevy::log::info;
+
 use super::{
     mapper::{MapResult, Mapper},
     Mirroring,
@@ -32,6 +34,11 @@ impl Mmc1 {
             chr_bank_nb,
         }
     }
+
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.control_register &= 0xFC;
+        self.control_register |= mirroring as u8;
+    }
 }
 
 impl Mapper for Mmc1 {
@@ -63,6 +70,7 @@ impl Mapper for Mmc1 {
     }
 
     fn cpu_map_write(&mut self, addr: u16, data: u8) -> Option<MapResult> {
+        info!("mmc1 write {:04X} {:02X}", addr, data);
         match addr {
             0x6000..=0x7FFF => {
                 self.vram[(addr & 0x1FFF) as usize] = data;

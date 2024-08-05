@@ -56,6 +56,7 @@ fn init_nes(mut commands: Commands, args: Res<ArgsResource>) {
         Some(rom_path) => {
             let cartridge = Cartridge::from_file(&rom_path)
                 .expect("Rom path should point to a valid rom file.");
+            info!("Loaded rom: {}", rom_path);
             commands.spawn((NesBundle::default(), cartridge));
         }
         None => {

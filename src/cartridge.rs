@@ -36,10 +36,10 @@ pub struct CartridgeHeader {
 #[derive(Default, Debug, PartialEq, Clone, Copy)]
 pub enum Mirroring {
     #[default]
-    Horizontal,
-    Vertical,
-    OneScreenLo,
-    OneScreenHi,
+    Horizontal = 0x03,
+    Vertical = 0x02,
+    OneScreenLo = 0x00,
+    OneScreenHi = 0x01,
 }
 
 #[allow(dead_code)]
@@ -171,11 +171,13 @@ impl Cartridge {
         for bank in &mut prg_banks {
             reader.read_exact(bank.as_mut_slice())?;
         }
+        info!("Loaded {} PRG banks", prg_banks.len());
 
         let mut chr_banks = vec![Mem::default(); header.chr_rom_banks as usize];
         for bank in &mut chr_banks {
             reader.read_exact(bank.as_mut_slice())?;
         }
+        info!("Loaded {} CHR banks", chr_banks.len());
 
         Ok(Self {
             chr_banks,
@@ -198,10 +200,11 @@ impl Cartridge {
             0x00 if cartridge.prg_rom_banks == 1 => Box::new(Nrom128::default()) as Box<dyn Mapper>,
             0x00 if cartridge.prg_rom_banks == 2 => Box::new(Nrom256::default()) as Box<dyn Mapper>,
             0x01 => {
-                let mmc1 = Mmc1::new(
+                let mut mmc1 = Mmc1::new(
                     cartridge.prg_rom_banks as usize,
                     cartridge.chr_rom_banks as usize,
                 );
+                mmc1.set_mirroring(cartridge.mirroring);
                 Box::new(mmc1) as Box<dyn Mapper>
             }
             _ => todo!("mapper {} is not implemented yet", cartridge.mapper_id),
