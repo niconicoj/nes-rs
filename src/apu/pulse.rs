@@ -116,7 +116,7 @@ fn update_pulse<const ID: usize>(
         pulse_var.volume.set(volume);
         let enabled = apu.status.pulse() & (1 << ID) != 0;
 
-        if pulse.envelope_counter == 0 || !enabled || pulse.mute {
+        if pulse.length_counter == 0 || !enabled || pulse.mute {
             sink.pause();
         } else {
             sink.play();

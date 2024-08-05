@@ -1,4 +1,5 @@
 use bevy::log::info;
+use bevy_fundsp::prelude::Num;
 
 use super::{
     mapper::{MapResult, Mapper},
@@ -62,7 +63,7 @@ impl Mapper for Mmc1 {
                 addr,
             }),
             (0xC000..=0xFFFF, _) => Some(MapResult::Rom {
-                bank: self.prg_bank_id[2] + 1,
+                bank: std::cmp::Ord::min(self.prg_bank_id[2] + 1, self.prg_bank_nb - 1),
                 addr,
             }),
             _ => None,

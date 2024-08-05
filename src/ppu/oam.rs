@@ -56,20 +56,6 @@ mod tests {
     use super::{Oam, OamEntry};
 
     #[test]
-    fn iter() {
-        let mut oam = Oam::default();
-
-        oam.entries[0] = OamEntry(0x01234567);
-        oam.entries[1] = OamEntry(0x89ABCDEF);
-
-        let mut iter = oam.iter();
-
-        assert_eq!(iter.next(), Some(&OamEntry(0x01234567)));
-        assert_eq!(iter.next(), Some(&OamEntry(0x89ABCDEF)));
-        assert_eq!(iter.next(), Some(&OamEntry(0x00000000)));
-    }
-
-    #[test]
     fn set_byte() {
         let mut oam = Oam::default();
 

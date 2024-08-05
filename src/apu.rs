@@ -36,6 +36,9 @@ struct Pulse {
     target_period: u32,
     volume: u8,
     mute: bool,
+    // length
+    length_reload: bool,
+    length_counter: u8,
     // envelope
     envelope_reload: bool,
     decay_level: u8,
@@ -52,7 +55,7 @@ impl Pulse {
         self.current_period = self.reg.timer();
         let change_amount = self.reg.timer() >> self.reg.shift_amount();
         self.target_period = if self.reg.negate() != 0 {
-            self.current_period - change_amount
+            self.current_period.saturating_sub(change_amount)
         } else {
             self.current_period + change_amount
         };
@@ -60,26 +63,30 @@ impl Pulse {
     }
 
     fn clock_length_counter(&mut self) {
-        if self.reg.length_counter_halt() == 0 {
-            let next_length = self.envelope_counter.saturating_sub(1);
-            self.envelope_counter = next_length;
+        if self.length_reload {
+            self.length_counter = LENGTH_COUNTER_TABLE[self.reg.length_counter() as usize];
+        } else {
+            if self.reg.length_counter_halt() == 0 {
+                let next_length = self.length_counter.saturating_sub(1);
+                self.length_counter = next_length;
+            }
         }
     }
 
     fn clock_envelope(&mut self) {
         if self.envelope_reload {
+            self.envelope_reload = false;
             self.decay_level = 15;
-            self.envelope_divider = 15;
-            self.envelope_period = self.reg.volume() as u8;
+            self.envelope_period = (self.reg.volume() + 1) as u8;
+            self.envelope_divider = self.envelope_period;
         } else {
-            self.envelope_divider = self
-                .envelope_divider
-                .saturating_sub(15 - self.envelope_period);
-            if self.envelope_divider != 0 {
-                if self.decay_level != 0 {
-                    self.decay_level = self.decay_level.saturating_sub(1);
-                } else {
-                    self.decay_level = (self.reg.envelope_loop() as u8) * 15;
+            self.envelope_divider = self.envelope_divider.saturating_sub(1);
+            if self.envelope_divider == 0 {
+                self.envelope_divider = self.envelope_period;
+                if self.decay_level > 0 {
+                    self.decay_level -= 1;
+                } else if self.reg.envelope_loop() != 0 {
+                    self.decay_level = 15;
                 }
             }
         }
@@ -101,7 +108,7 @@ impl Pulse {
             self.sweep_counter = self.reg.sweep_period() as u8;
             self.sweep_reload = false;
         } else {
-            self.sweep_counter -= 1;
+            self.sweep_counter = self.sweep_counter.saturating_sub(1);
         }
     }
 }
@@ -234,21 +241,26 @@ impl Apu {
                     self.pulse[pulse_id].sweep_reload = true;
                 }
             }
-            0x4002..=0x4003 => {
-                let offset = (addr & 0x03) * 8;
-                let data = (data as u32) << offset;
-                self.pulse[0].reg.0 &= !(0xFF << offset);
-                self.pulse[0].reg.0 |= data;
+            0x4002 | 0x4006 => {
+                let pulse_id = ((addr >> 2) & 1) as usize;
+                self.pulse[pulse_id].reg.0 &= !(0xFFu32 << 16);
+                self.pulse[pulse_id].reg.0 |= (data as u32) << 16;
             }
-            0x4006..=0x4007 => {
-                let offset = (addr & 0x03) * 8;
-                let data = (data as u32) << offset;
-                self.pulse[1].reg.0 &= !(0xFF << offset);
-                self.pulse[1].reg.0 |= data;
+            0x4003 | 0x4007 => {
+                let pulse_id = ((addr >> 2) & 1) as usize;
+                self.pulse[pulse_id].reg.0 &= !(0xFFu32 << 24);
+                self.pulse[pulse_id].reg.0 |= (data as u32) << 24;
+                if (self.status.pulse() >> pulse_id) & 1 != 0 {
+                    self.pulse[pulse_id].length_reload = true;
+                }
             }
+
             0x4008..=0x400B => {}
             0x4015 => {
+                // should also reset length counter
                 self.status.0 = data;
+                self.pulse[0].length_counter *= (data >> 0) & 1;
+                self.pulse[1].length_counter *= (data >> 1) & 1;
             }
             0x4017 => {}
             _ => {}
@@ -278,5 +290,20 @@ mod tests {
 
         apu.cpu_write(0x4001, 0x7F);
         assert!(apu.pulse[0].reg.sweep_enabled() == 0);
+
+        apu.cpu_write(0x4002, 0b11001010);
+        apu.cpu_write(0x4003, 0b11011101);
+        assert_eq!(apu.pulse[0].reg.timer(), 0b10111001010);
+        assert_eq!(apu.pulse[0].reg.length_counter(), 0b11011);
+
+        apu.cpu_write(0x4006, 0b11001010);
+        apu.cpu_write(0x4007, 0b11011101);
+        assert_eq!(
+            apu.pulse[1].reg.timer(),
+            0b10111001010,
+            "{:#010b}",
+            apu.pulse[1].reg.timer()
+        );
+        assert_eq!(apu.pulse[1].reg.length_counter(), 0b11011);
     }
 }
