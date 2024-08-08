@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 use bitfield::bitfield;
 use pulse::PulsePlugin;
+use triangle::TrianglePlugin;
 
 mod pulse;
+mod triangle;
 
 const CPU_HZ: f32 = 1789773.0;
 
@@ -32,7 +34,6 @@ bitfield! {
 #[derive(Default)]
 struct Pulse {
     reg: PulseRegister,
-    current_period: u32,
     target_period: u32,
     volume: u8,
     mute: bool,
@@ -48,23 +49,33 @@ struct Pulse {
     // sweep
     sweep_reload: bool,
     sweep_counter: u8,
+    sweep_complement: bool,
 }
 
 impl Pulse {
-    fn update_period(&mut self) {
-        self.current_period = self.reg.timer();
+    fn new(sweep_complement: bool) -> Self {
+        Self {
+            sweep_complement,
+            ..default()
+        }
+    }
+
+    fn update_target_period(&mut self) {
         let change_amount = self.reg.timer() >> self.reg.shift_amount();
         self.target_period = if self.reg.negate() != 0 {
-            self.current_period.saturating_sub(change_amount)
+            self.reg
+                .timer()
+                .saturating_sub(change_amount + (self.sweep_complement as u32))
         } else {
-            self.current_period + change_amount
+            self.reg.timer() + change_amount
         };
-        self.mute = self.target_period > 0x7FF || self.current_period < 0x08;
+        self.mute = self.target_period > 0x7FF || self.reg.timer() < 0x08;
     }
 
     fn clock_length_counter(&mut self) {
         if self.length_reload {
             self.length_counter = LENGTH_COUNTER_TABLE[self.reg.length_counter() as usize];
+            self.length_reload = false;
         } else {
             if self.reg.length_counter_halt() == 0 {
                 let next_length = self.length_counter.saturating_sub(1);
@@ -115,12 +126,47 @@ impl Pulse {
 
 bitfield! {
     #[derive(Default)]
-    struct Triangle(u32);
+    struct TriangleRegister(u32);
     impl Debug;
     linear_counter, set_linear_counter: 6, 0;
     linear_control, set_linear_control: 7, 7;
+    length_counter_halt, set_length_counter_halt: 7, 7;
     timer, set_timer: 26, 16;
     length_counter, set_length_counter: 31, 27;
+}
+
+#[derive(Default)]
+struct Triangle {
+    reg: TriangleRegister,
+    length_counter_reload: bool,
+    length_counter: u8,
+    linear_counter_reload: bool,
+    linear_counter: u8,
+}
+
+impl Triangle {
+    fn clock_linear_counter(&mut self) {
+        if self.linear_counter_reload {
+            debug!("linear counter load = {}", self.reg.linear_counter());
+            self.linear_counter = self.reg.linear_counter() as u8;
+        } else {
+            self.linear_counter = self.linear_counter.saturating_sub(1);
+        }
+        if self.reg.linear_control() == 0 {
+            self.linear_counter_reload = false;
+        }
+    }
+
+    fn clock_length_counter(&mut self) {
+        if self.length_counter_reload {
+            self.length_counter = LENGTH_COUNTER_TABLE[self.reg.length_counter() as usize];
+            self.length_counter_reload = false;
+        } else {
+            if self.reg.length_counter_halt() == 0 {
+                self.length_counter = self.length_counter.saturating_sub(1);
+            }
+        }
+    }
 }
 
 bitfield! {
@@ -161,7 +207,7 @@ enum Step {
     Five,
 }
 
-#[derive(Component, Default)]
+#[derive(Component)]
 pub struct Apu {
     pulse: [Pulse; 2],
     triangle: Triangle,
@@ -169,6 +215,19 @@ pub struct Apu {
     status: ApuStatus,
     frame_counter: FrameCounter,
     cycles: usize,
+}
+
+impl Default for Apu {
+    fn default() -> Self {
+        Self {
+            pulse: [Pulse::new(false), Pulse::new(true)],
+            triangle: Triangle::default(),
+            noise: Noise::default(),
+            status: ApuStatus::default(),
+            frame_counter: FrameCounter::default(),
+            cycles: 0,
+        }
+    }
 }
 
 impl Apu {
@@ -194,13 +253,14 @@ impl Apu {
                     self.quarter_frame_tick();
                     self.cycles = 0;
                 }
-                _ => {}
-            };
-            self.pulse[0].update_period();
-            self.pulse[1].update_period();
+                _ => return false,
+            }
+            self.pulse[0].update_target_period();
+            self.pulse[1].update_target_period();
+            return true;
+        } else {
+            false
         }
-
-        false
     }
 
     pub fn quarter_frame_tick(&mut self) {
@@ -208,6 +268,9 @@ impl Apu {
             if (self.status.pulse() >> pulse_id) & 1 != 0 {
                 self.pulse[pulse_id].clock_envelope();
             }
+        }
+        if self.status.triangle() {
+            self.triangle.clock_linear_counter();
         }
     }
 
@@ -217,6 +280,9 @@ impl Apu {
                 self.pulse[pulse_id].clock_length_counter();
                 self.pulse[pulse_id].clock_sweep();
             }
+        }
+        if self.status.triangle() {
+            self.triangle.clock_length_counter();
         }
     }
 
@@ -254,15 +320,38 @@ impl Apu {
                     self.pulse[pulse_id].length_reload = true;
                 }
             }
-
-            0x4008..=0x400B => {}
+            0x4008 => {
+                debug!("0x4008 write = {:#010b}", data);
+                self.triangle.reg.0 &= !0xFFu32;
+                self.triangle.reg.0 |= data as u32;
+                if self.status.triangle() {
+                    self.triangle.linear_counter_reload = true;
+                }
+            }
+            0x400A => {
+                debug!("0x400A write = {:#010b}", data);
+                self.triangle.reg.0 &= !(0xFFu32 << 16);
+                self.triangle.reg.0 |= (data as u32) << 16;
+            }
+            0x400B => {
+                debug!("0x400B write = {:#010b}", data);
+                self.triangle.reg.0 &= !(0xFFu32 << 24);
+                self.triangle.reg.0 |= (data as u32) << 24;
+                if self.status.triangle() {
+                    self.triangle.length_counter_reload = true;
+                    self.triangle.linear_counter_reload = true;
+                }
+            }
             0x4015 => {
                 // should also reset length counter
                 self.status.0 = data;
                 self.pulse[0].length_counter *= (data >> 0) & 1;
                 self.pulse[1].length_counter *= (data >> 1) & 1;
+                self.triangle.length_counter *= (data >> 2) & 1;
             }
-            0x4017 => {}
+            0x4017 => {
+                self.frame_counter.0 = data;
+            }
             _ => {}
         }
     }
@@ -272,7 +361,7 @@ pub struct ApuPlugin;
 
 impl Plugin for ApuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((PulsePlugin::<0>, PulsePlugin::<1>));
+        app.add_plugins((PulsePlugin::<0>, PulsePlugin::<1>, TrianglePlugin));
     }
 }
 

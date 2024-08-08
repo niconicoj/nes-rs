@@ -11,7 +11,7 @@ use screen_buffer::ScreenBufferPlugin;
 
 use crate::{
     cartridge::{Cartridge, Mirroring},
-    mem::Mem,
+    mem::{self, Mem},
 };
 
 use oam::{Oam, OamEntry};
@@ -124,6 +124,7 @@ impl ScanlineSprites {
 #[derive(Component)]
 pub struct Ppu {
     pub screen_buffer: [[u8; 256]; 240],
+    temp_screen_buffer: [[u8; 256]; 240],
     registers: PpuRegisters,
     name_table: [Mem<0x400>; 2],
     palette_table: [u8; 0x20],
@@ -156,6 +157,7 @@ impl Default for Ppu {
     fn default() -> Self {
         Self {
             screen_buffer: [[0; 256]; 240],
+            temp_screen_buffer: [[0; 256]; 240],
             registers: PpuRegisters::default(),
             name_table: [Mem::<0x400>::default(), Mem::<0x400>::default()],
             palette_table: [0; 0x20],
@@ -187,6 +189,10 @@ impl Default for Ppu {
 }
 
 impl Ppu {
+    pub fn swap_screen_buffer(&mut self) {
+        std::mem::swap(&mut self.screen_buffer, &mut self.temp_screen_buffer);
+    }
+
     fn increment_scroll_x(&mut self) {
         if self.registers.mask.render_background() || self.registers.mask.render_sprites() {
             if self.vram_addr.coarse_x() == 31 {
@@ -550,6 +556,7 @@ impl<'w> PpuQueryItem<'w> {
             if self.ppu.scanline >= 261 {
                 self.ppu.scanline = -1;
                 self.ppu.frame_complete = true;
+                self.ppu.swap_screen_buffer();
             }
         }
     }
@@ -560,7 +567,7 @@ impl<'w> PpuQueryItem<'w> {
     }
 
     fn set_pixel(&mut self, x: i16, y: i16, color: u8) {
-        if let Some(row) = self.ppu.screen_buffer.get_mut(y as usize) {
+        if let Some(row) = self.ppu.temp_screen_buffer.get_mut(y as usize) {
             if let Some(pixel) = row.get_mut(x as usize) {
                 *pixel = color;
             }

@@ -102,7 +102,7 @@ fn update_pulse<const ID: usize>(
 ) {
     if let (Ok(apu), Ok((sink, _))) = (apu.get_single(), sink.get_single()) {
         let pulse = &apu.pulse[ID];
-        let hz = CPU_HZ / (16.0 * ((pulse.current_period as f32) + 1.0));
+        let hz = CPU_HZ / (16.0 * ((pulse.reg.timer() as f32) + 1.0));
         let volume = (pulse.volume as f32) / 15.0;
         let duty = match pulse.reg.duty() {
             0 => 0.125,

@@ -98,9 +98,9 @@ impl<'w> CpuBusQueryItem<'w> {
         self.ppu.nmi()
     }
 
-    pub fn tick(&mut self, cycles: usize) {
+    pub fn tick(&mut self, cycles: usize) -> bool {
         self.ppu.tick();
-        self.apu.tick(cycles);
+        return self.apu.tick(cycles);
     }
 
     pub fn dma(&self) -> DmaStatus {

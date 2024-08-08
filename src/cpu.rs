@@ -180,9 +180,9 @@ impl<'w> CpuQueryItem<'w> {
         }
         return false;
     }
-    pub fn clock(&mut self) {
+    pub fn clock(&mut self) -> bool {
         self.clock.cycles += 1;
-        self.bus.tick(self.clock.cycles);
+        let apu_frame = self.bus.tick(self.clock.cycles);
         if self.clock.cycles % 3 == 0 {
             if self.bus.dma() == DmaStatus::Inactive {
                 self.tick();
@@ -198,6 +198,7 @@ impl<'w> CpuQueryItem<'w> {
         if self.bus.nmi() {
             self.nmi();
         }
+        return apu_frame;
     }
 
     fn tick(&mut self) {
@@ -295,7 +296,7 @@ impl Plugin for CpuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BreakPointState>()
             .insert_resource(BreakPointState::default())
-            .insert_resource(Time::<Fixed>::from_hz(120.0))
+            .insert_resource(Time::<Fixed>::from_hz(MASTER_CLOCK_HZ / 1000.0))
             .add_systems(FixedUpdate, run_emulation);
     }
 }
