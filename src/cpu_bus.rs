@@ -115,7 +115,10 @@ impl<'w> CpuBusQueryItem<'w> {
         match addr {
             0x0000..=0x1FFF => Some(self.wram.read(addr)),
             0x2000..=0x3FFF => self.ppu.cpu_read(addr),
-            0x4016 | 0x4017 => Some(self.controller.read_shifter()),
+            0x4016 => {
+                debug!("Controller read");
+                Some(self.controller.read_shifter())
+            }
             0x4020..=0xFFFF => self.ppu.cpu_read(addr),
             _ => None,
         }
@@ -132,7 +135,10 @@ impl<'w> CpuBusQueryItem<'w> {
                 self.dma.addr = 0x00;
                 self.dma.status = DmaStatus::Idling;
             }
-            0x4016 => self.controller.store_shifter(),
+            0x4016 => {
+                debug!("Controller write: {:#X}", data);
+                self.controller.store_shifter();
+            }
             0x4020..=0xFFFF => self.ppu.cpu_write(addr, data),
             _ => {}
         };

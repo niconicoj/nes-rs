@@ -1,6 +1,6 @@
 use std::io::BufRead;
 
-use bevy::log::{debug, info};
+use bevy::log::info;
 use bitfield::bitfield;
 
 use super::Mapper;
@@ -74,7 +74,6 @@ impl Mmc1 {
         prg_ram_bank: Option<Mem<0x2000>>,
         mirroring: Mirroring,
     ) -> Self {
-        debug!("MMC1 mapper mirroring: {:?}", mirroring as u8);
         Self {
             control_register: ControlRegister(0x1C | mirroring as u8),
             shift_register: 0,
@@ -100,11 +99,6 @@ impl Mmc1 {
 
 impl Mapper for Mmc1 {
     fn cpu_map_read(&self, addr: u16) -> Option<u8> {
-        debug!(
-            "MMC1 read at {:#06x}, mode : {:#06x}",
-            addr,
-            self.control_register.prg_mode()
-        );
         match (addr, self.control_register.prg_mode()) {
             (0x6000..=0x7FFF, _) => self.vram.as_ref().map(|bank| bank.read(addr & 0x1FFF)),
             // full bank
@@ -128,10 +122,7 @@ impl Mapper for Mmc1 {
                 .get(self.prg_bank)
                 .map(|bank| bank.read(addr)),
             (0xC000..=0xFFFF, 3) => self.prg_banks.last().map(|bank| bank.read(addr)),
-            _ => {
-                debug!("MMC1 read at {:#06x} not handled", addr);
-                None
-            }
+            _ => None,
         }
     }
 

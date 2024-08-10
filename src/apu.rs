@@ -149,7 +149,6 @@ struct Triangle {
 impl Triangle {
     fn clock_linear_counter(&mut self) {
         if self.linear_counter_reload {
-            debug!("linear counter load = {}", self.reg.linear_counter());
             self.linear_counter = self.reg.linear_counter() as u8;
         } else {
             self.linear_counter = self.linear_counter.saturating_sub(1);
