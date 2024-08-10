@@ -89,6 +89,15 @@ impl Mmc1 {
     }
 }
 
+impl Mmc1 {
+    fn load_shift_register(&mut self, data: u8) -> u8 {
+        let loaded_value = self.shift_register >> 1 | ((data & 0x01) << 4);
+        self.shift_count = 0;
+        self.shift_register = 0;
+        loaded_value
+    }
+}
+
 impl Mapper for Mmc1 {
     fn cpu_map_read(&self, addr: u16) -> Option<u8> {
         debug!(
@@ -142,33 +151,25 @@ impl Mapper for Mmc1 {
                 self.shift_count = 0;
                 true
             }
-            (0x8000..=0xFFFF, data, shift_count) if shift_count != 5 => {
+            (0x8000..=0xFFFF, data, shift_count) if shift_count < 4 => {
                 self.shift_register = self.shift_register >> 1 | ((data & 0x01) << 4);
                 self.shift_count += 1;
                 true
             }
             (0x8000..=0x9FFF, _, _) => {
-                self.control_register = ControlRegister(self.shift_register);
-                self.shift_register = 0;
-                self.shift_count = 0;
+                self.control_register = ControlRegister(self.load_shift_register(data));
                 true
             }
             (0xA000..=0xBFFF, _, _) => {
-                self.chr_bank_lo = (self.shift_register & 0x1F) as usize;
-                self.shift_register = 0;
-                self.shift_count = 0;
+                self.chr_bank_lo = (self.load_shift_register(data) & 0x1F) as usize;
                 true
             }
             (0xC000..=0xDFFF, _, _) => {
-                self.chr_bank_hi = (self.shift_register & 0x1F) as usize;
-                self.shift_register = 0;
-                self.shift_count = 0;
+                self.chr_bank_hi = (self.load_shift_register(data) & 0x1F) as usize;
                 true
             }
             (0xE000..=0xFFFF, _, _) => {
-                self.prg_bank = (self.shift_register & 0x0F) as usize;
-                self.shift_register = 0;
-                self.shift_count = 0;
+                self.prg_bank = (self.load_shift_register(data) & 0x0F) as usize;
                 true
             }
             _ => false,
@@ -207,5 +208,13 @@ impl Mapper for Mmc1 {
         })
     }
 
-    fn ui(&self, _ui: &mut bevy_egui::egui::Ui) {}
+    fn ui(&self, ui: &mut bevy_egui::egui::Ui) {
+        ui.monospace(format!("shift register : {:#07b}", self.shift_register));
+        ui.monospace(format!("shift count    : {}", self.shift_count));
+        ui.monospace(format!(
+            "prg mode       : {}",
+            self.control_register.prg_mode()
+        ));
+        ui.monospace(format!("prg selected   : {}", self.prg_bank));
+    }
 }

@@ -116,7 +116,5 @@ impl Mapper for Nrom256 {
         None
     }
 
-    fn ui(&self, _ui: &mut bevy_egui::egui::Ui) {
-        todo!()
-    }
+    fn ui(&self, _ui: &mut bevy_egui::egui::Ui) {}
 }

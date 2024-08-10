@@ -58,18 +58,25 @@ impl CartridgeHeader {
     }
 
     pub fn from_bytes(bytes: &[u8; 16]) -> Result<Self, HeaderError> {
+        let raw_display = bytes
+            .iter()
+            .map(|b| format!("{:#04x} ({:#010b})", b, b))
+            .collect::<Vec<_>>()
+            .join("\n");
+        debug!("Parsing header \n{}", raw_display);
         match bytes[7] & 0x0C {
-            0x08 => Self::parse_nes2(bytes),
+            0x0C => Self::parse_nes2(bytes),
             _ => Self::parse_ines(bytes),
         }
     }
 
     fn parse_ines(flags: &[u8; 16]) -> Result<Self, HeaderError> {
+        debug!("Parsing iNES header");
         Ok(CartridgeHeader {
             prg_rom_banks: flags[4],
             chr_rom_banks: flags[5],
             prg_ram_banks: flags[8],
-            mapper_id: flags[6] & 0xF0 >> 4 | flags[7] & 0xF0,
+            mapper_id: ((flags[6] & 0xF0) >> 4) | (flags[7] & 0xF0),
             four_screen: flags[6] & 0x08 != 0,
             trainer: flags[6] & 0x04 != 0,
             battery: flags[6] & 0x02 == 0,
