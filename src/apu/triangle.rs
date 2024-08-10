@@ -35,7 +35,7 @@ impl DspGraph for TriangleDsp {
     }
 
     fn generate_graph(&self) -> Box<dyn AudioUnit> {
-        Box::new(var(&self.hz) >> triangle() >> split::<U2>() * 0.4)
+        Box::new(var(&self.hz) >> triangle() >> declick_s(0.1) >> split::<U2>() * 0.4)
     }
 }
 

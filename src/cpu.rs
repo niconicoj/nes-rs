@@ -37,7 +37,9 @@ impl Default for SystemClock {
 }
 
 impl SystemClock {
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.cycles = usize::MAX - 8;
+    }
 }
 
 bitfield! {
@@ -101,9 +103,9 @@ impl Cpu {
         self.a = 0;
         self.x = 0;
         self.y = 0;
+        self.status = CpuStatus::default();
 
-        // really ?
-        self.sp = self.sp.wrapping_sub(3).min(0xFF);
+        self.sp = 0xFD;
 
         self.cycles = 8;
     }
@@ -169,23 +171,21 @@ impl<'w> CpuQueryReadOnlyItem<'w> {
 }
 
 impl<'w> CpuQueryItem<'w> {
-    pub fn next_frame(&mut self, breakpoints: Option<&BreakPointState>) -> bool {
+    pub fn next_frame(&mut self) -> bool {
         while !self.bus.frame_complete() {
-            self.clock();
-            if let Some(breakpoints) = breakpoints {
-                if breakpoints.check(self.cpu.pc) {
-                    return true;
-                }
-            }
+            self.clock(None);
         }
         return false;
     }
-    pub fn clock(&mut self) -> bool {
-        self.clock.cycles += 1;
-        let apu_frame = self.bus.tick(self.clock.cycles);
+    pub fn clock(&mut self, breakpoints: Option<&BreakPointState>) -> bool {
+        self.clock.cycles = self.clock.cycles.wrapping_add(1);
+        self.bus.tick(self.clock.cycles);
         if self.clock.cycles % 3 == 0 {
             if self.bus.dma() == DmaStatus::Inactive {
                 self.tick();
+                if breakpoints.is_some_and(|bp| bp.check(self.cpu.pc)) {
+                    return false;
+                }
             } else {
                 match (self.bus.dma(), self.clock.cycles % 2 == 0) {
                     (DmaStatus::Idling, odd_cycle) if odd_cycle => self.bus.start_dma(),
@@ -198,7 +198,7 @@ impl<'w> CpuQueryItem<'w> {
         if self.bus.nmi() {
             self.nmi();
         }
-        return apu_frame;
+        return true;
     }
 
     fn tick(&mut self) {
@@ -304,6 +304,7 @@ impl Plugin for CpuPlugin {
 pub fn cpu_gui(mut query: Query<CpuQuery>, mut contexts: EguiContexts) {
     egui::Window::new("CPU Info").show(&contexts.ctx_mut(), |ui| {
         if let Ok(mut query) = query.get_single_mut() {
+            ui.monospace(format!("Cycles : {}", query.clock.cycles / 3));
             ui.horizontal(|ui| {
                 ui.monospace("Status: ");
                 ui.monospace(RichText::new("C").color(if query.cpu.status.carry() {
@@ -359,14 +360,14 @@ pub fn cpu_gui(mut query: Query<CpuQuery>, mut contexts: EguiContexts) {
             }
             if ui.button("step").clicked() {
                 while query.cpu.cycles == 0 {
-                    query.clock();
+                    query.clock(None);
                 }
                 while query.cpu.cycles != 0 {
-                    query.clock();
+                    query.clock(None);
                 }
             }
             if ui.button("next frame").clicked() {
-                query.next_frame(None);
+                query.next_frame();
             }
             if ui.button("toggle active").clicked() {
                 query.clock.enabled = !query.clock.enabled;
@@ -455,12 +456,15 @@ impl UpperHex for Operand {
     }
 }
 
-fn run_emulation(mut query: Query<CpuQuery>, time: Res<Time>) {
+fn run_emulation(mut query: Query<CpuQuery>, time: Res<Time>, breakpoints: Res<BreakPointState>) {
     if let Ok(mut query) = query.get_single_mut() {
         if query.clock.enabled {
             query.clock.timer.tick(time.delta());
             for _ in 0..query.clock.timer.times_finished_this_tick() as usize {
-                query.clock();
+                if !query.clock(Some(&breakpoints)) {
+                    query.clock.enabled = false;
+                    break;
+                }
             }
         }
     }

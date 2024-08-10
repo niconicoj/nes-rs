@@ -1,23 +1,14 @@
-use std::{fs::File, io::Read};
+use std::io::Read;
 
 use bevy::prelude::*;
 use bevy_egui::egui::{ScrollArea, Separator};
 use bevy_egui::{egui, EguiContexts};
-use mapper::{MapResult, Mapper};
+use mapper::{build_mapper, Mapper};
 
-mod dummy;
 mod mapper;
-mod mmc1;
-mod nrom;
 
-#[cfg(test)]
-pub use dummy::DummyMapper;
-use mmc1::Mmc1;
-pub use nrom::Nrom128;
-use nrom::Nrom256;
 use thiserror::Error;
 
-use crate::mem::Mem;
 use crate::nes::NesMarker;
 
 #[derive(Default, Debug, PartialEq)]
@@ -81,7 +72,7 @@ impl CartridgeHeader {
             mapper_id: flags[6] & 0xF0 >> 4 | flags[7] & 0xF0,
             four_screen: flags[6] & 0x08 != 0,
             trainer: flags[6] & 0x04 != 0,
-            battery: flags[6] & 0x02 != 0,
+            battery: flags[6] & 0x02 == 0,
             mirroring: if flags[6] & 0x01 != 0 {
                 Mirroring::Vertical
             } else {
@@ -103,23 +94,16 @@ impl CartridgeHeader {
 #[derive(Component)]
 pub struct Cartridge {
     header: CartridgeHeader,
-    prg_banks: Vec<Mem<0x4000>>,
-    chr_banks: Vec<Mem<0x2000>>,
     mapper: Box<dyn Mapper>,
 }
 
 impl Cartridge {
     #[cfg(test)]
     pub fn testing(header: Option<CartridgeHeader>) -> Self {
-        let mapper: Box<dyn Mapper> = Box::new(DummyMapper::default());
+        let mapper = mapper::dummy();
         let header = header.unwrap_or(CartridgeHeader::default());
 
-        Self {
-            header,
-            mapper,
-            prg_banks: vec![Mem::default(); 2],
-            chr_banks: vec![Mem::default(); 1],
-        }
+        Self { header, mapper }
     }
 
     pub fn mirroring(&self) -> Mirroring {
@@ -127,35 +111,21 @@ impl Cartridge {
     }
 
     pub fn cpu_read(&self, addr: u16) -> Option<u8> {
-        self.mapper.cpu_map_read(addr).map(|result| match result {
-            MapResult::Rom { bank, addr } => self.prg_banks[bank].read(addr),
-            MapResult::Instant { data } => data,
-        })
+        self.mapper.cpu_map_read(addr)
     }
 
+    #[must_use]
     pub fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
-        if let Some(MapResult::Rom { bank, addr }) = self.mapper.cpu_map_write(addr, data) {
-            self.prg_banks[bank].write(addr, data);
-            true
-        } else {
-            false
-        }
+        self.mapper.cpu_map_write(addr, data)
     }
 
     pub fn ppu_read(&self, addr: u16) -> Option<u8> {
-        self.mapper.ppu_map_read(addr).map(|result| match result {
-            MapResult::Rom { bank, addr } => self.chr_banks[bank].read(addr),
-            MapResult::Instant { data } => data,
-        })
+        self.mapper.ppu_map_read(addr)
     }
 
+    #[must_use]
     pub fn ppu_write(&mut self, addr: u16, data: u8) -> bool {
-        if let Some(MapResult::Rom { bank, addr }) = self.mapper.ppu_map_write(addr, data) {
-            self.chr_banks[bank].write(addr, data);
-            true
-        } else {
-            false
-        }
+        self.mapper.ppu_map_write(addr, data)
     }
 
     pub fn from_file(file: &str) -> Result<Self, HeaderError> {
@@ -165,52 +135,16 @@ impl Cartridge {
         let mut buffer = [0; 16];
         reader.read_exact(&mut buffer)?;
         let header = CartridgeHeader::from_bytes(&buffer)?;
-        let mapper = Self::init_mapper(&header, &mut reader)?;
 
-        let mut prg_banks = vec![Mem::default(); header.prg_rom_banks as usize];
-        for bank in &mut prg_banks {
-            reader.read_exact(bank.as_mut_slice())?;
-        }
-        info!("Loaded {} PRG banks", prg_banks.len());
-
-        let mut chr_banks = vec![Mem::default(); header.chr_rom_banks as usize];
-        for bank in &mut chr_banks {
-            reader.read_exact(bank.as_mut_slice())?;
-        }
-        info!("Loaded {} CHR banks", chr_banks.len());
-
-        Ok(Self {
-            chr_banks,
-            prg_banks,
-            mapper,
-            header,
-        })
-    }
-
-    fn init_mapper(
-        cartridge: &CartridgeHeader,
-        reader: &mut std::io::BufReader<File>,
-    ) -> Result<Box<dyn Mapper>, HeaderError> {
-        if cartridge.trainer {
+        if header.trainer {
+            debug!("Reading trainer");
             let mut trainer = [0; 512];
             reader.read_exact(&mut trainer)?;
         }
 
-        let mapper = match cartridge.mapper_id {
-            0x00 if cartridge.prg_rom_banks == 1 => Box::new(Nrom128::default()) as Box<dyn Mapper>,
-            0x00 if cartridge.prg_rom_banks == 2 => Box::new(Nrom256::default()) as Box<dyn Mapper>,
-            0x01 => {
-                let mut mmc1 = Mmc1::new(
-                    cartridge.prg_rom_banks as usize,
-                    cartridge.chr_rom_banks as usize,
-                );
-                mmc1.set_mirroring(cartridge.mirroring);
-                Box::new(mmc1) as Box<dyn Mapper>
-            }
-            _ => todo!("mapper {} is not implemented yet", cartridge.mapper_id),
-        };
-
-        Ok(mapper)
+        info!("Mapper ID {}", header.mapper_id);
+        let mapper = build_mapper(&header, reader)?;
+        Ok(Self { mapper, header })
     }
 }
 
@@ -225,6 +159,8 @@ pub fn cartridge_gui(
             .show(contexts.ctx_mut(), |ui| match maybe_cartridge {
                 Some(cartridge) => {
                     ui.heading(format!("mapper {}", cartridge.header.mapper_id));
+                    ui.separator();
+                    cartridge.mapper.ui(ui);
                     ui.separator();
                     ui.label("PRG banks");
                     ui.monospace("         0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");

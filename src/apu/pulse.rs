@@ -42,7 +42,10 @@ impl DspGraph for PulseDsp {
 
     fn generate_graph(&self) -> Box<dyn AudioUnit> {
         Box::new(
-            (var(&self.hz) | var(&self.duty)) >> pulse() * var(&self.volume) >> split::<U2>() * 0.3,
+            (var(&self.hz) | var(&self.duty))
+                >> pulse() * var(&self.volume)
+                >> declick()
+                >> split::<U2>() * 0.3,
         )
     }
 }

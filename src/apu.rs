@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 use bitfield::bitfield;
+use noise::NoisePlugin;
 use pulse::PulsePlugin;
 use triangle::TrianglePlugin;
 
+mod noise;
 mod pulse;
 mod triangle;
 
@@ -171,14 +173,68 @@ impl Triangle {
 
 bitfield! {
     #[derive(Default)]
-    struct Noise(u32);
+    struct NoiseRegister(u32);
     impl Debug;
     volume, set_volume: 3, 0;
     constant_volume, set_constant_volume: 4, 4;
     envelope_loop, set_envelope_loop: 5, 5;
+    length_counter_halt, set_length_counter_halt: 5, 5;
     period, set_period: 19, 16;
     loop_noise, set_loop_noise: 23, 23;
     length_counter, set_length_counter: 31, 27;
+}
+
+#[derive(Default)]
+struct Noise {
+    reg: NoiseRegister,
+    volume: u8,
+    // length
+    length_reload: bool,
+    length_counter: u8,
+    // envelope
+    envelope_reload: bool,
+    decay_level: u8,
+    envelope_divider: u8,
+    envelope_counter: u8,
+    envelope_period: u8,
+}
+
+impl Noise {
+    fn clock_length_counter(&mut self) {
+        if self.length_reload {
+            self.length_counter = LENGTH_COUNTER_TABLE[self.reg.length_counter() as usize];
+            self.length_reload = false;
+        } else {
+            if self.reg.length_counter_halt() == 0 {
+                let next_length = self.length_counter.saturating_sub(1);
+                self.length_counter = next_length;
+            }
+        }
+    }
+
+    fn clock_envelope(&mut self) {
+        if self.envelope_reload {
+            self.envelope_reload = false;
+            self.decay_level = 15;
+            self.envelope_period = (self.reg.volume() + 1) as u8;
+            self.envelope_divider = self.envelope_period;
+        } else {
+            self.envelope_divider = self.envelope_divider.saturating_sub(1);
+            if self.envelope_divider == 0 {
+                self.envelope_divider = self.envelope_period;
+                if self.decay_level > 0 {
+                    self.decay_level -= 1;
+                } else if self.reg.envelope_loop() != 0 {
+                    self.decay_level = 15;
+                }
+            }
+        }
+        if self.reg.constant_volume() != 0 {
+            self.volume = self.reg.volume() as u8;
+        } else {
+            self.volume = self.decay_level;
+        }
+    }
 }
 
 bitfield! {
@@ -269,6 +325,9 @@ impl Apu {
                 self.pulse[pulse_id].clock_envelope();
             }
         }
+        if self.status.noise() {
+            self.noise.clock_envelope();
+        }
         if self.status.triangle() {
             self.triangle.clock_linear_counter();
         }
@@ -283,6 +342,9 @@ impl Apu {
         }
         if self.status.triangle() {
             self.triangle.clock_length_counter();
+        }
+        if self.status.noise() {
+            self.noise.clock_length_counter();
         }
     }
 
@@ -321,7 +383,6 @@ impl Apu {
                 }
             }
             0x4008 => {
-                debug!("0x4008 write = {:#010b}", data);
                 self.triangle.reg.0 &= !0xFFu32;
                 self.triangle.reg.0 |= data as u32;
                 if self.status.triangle() {
@@ -329,17 +390,35 @@ impl Apu {
                 }
             }
             0x400A => {
-                debug!("0x400A write = {:#010b}", data);
                 self.triangle.reg.0 &= !(0xFFu32 << 16);
                 self.triangle.reg.0 |= (data as u32) << 16;
             }
             0x400B => {
-                debug!("0x400B write = {:#010b}", data);
                 self.triangle.reg.0 &= !(0xFFu32 << 24);
                 self.triangle.reg.0 |= (data as u32) << 24;
                 if self.status.triangle() {
                     self.triangle.length_counter_reload = true;
                     self.triangle.linear_counter_reload = true;
+                }
+            }
+            0x400C => {
+                self.noise.reg.0 &= !0xFF;
+                self.noise.reg.0 |= data as u32;
+                if self.status.noise() {
+                    self.noise.envelope_reload = true;
+                    self.noise.envelope_counter =
+                        LENGTH_COUNTER_TABLE[self.noise.reg.length_counter() as usize];
+                }
+            }
+            0x400E => {
+                self.noise.reg.0 &= !(0xFFu32 << 16);
+                self.noise.reg.0 |= (data as u32) << 16;
+            }
+            0x400F => {
+                self.noise.reg.0 &= !(0xFFu32 << 24);
+                self.noise.reg.0 |= (data as u32) << 24;
+                if self.status.noise() {
+                    self.noise.length_reload = true;
                 }
             }
             0x4015 => {
@@ -361,7 +440,12 @@ pub struct ApuPlugin;
 
 impl Plugin for ApuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((PulsePlugin::<0>, PulsePlugin::<1>, TrianglePlugin));
+        app.add_plugins((
+            PulsePlugin::<0>,
+            PulsePlugin::<1>,
+            TrianglePlugin,
+            NoisePlugin,
+        ));
     }
 }
 

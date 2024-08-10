@@ -11,7 +11,7 @@ use screen_buffer::ScreenBufferPlugin;
 
 use crate::{
     cartridge::{Cartridge, Mirroring},
-    mem::{self, Mem},
+    mem::Mem,
 };
 
 use oam::{Oam, OamEntry};
@@ -590,7 +590,7 @@ impl<'w> PpuQueryItem<'w> {
             0x4014 => {}
             0x4020..=0xFFFF => {
                 if let Some(cartridge) = &mut self.cartridge {
-                    cartridge.cpu_write(addr, data);
+                    _ = cartridge.cpu_write(addr, data);
                 }
             }
             _ => {}
