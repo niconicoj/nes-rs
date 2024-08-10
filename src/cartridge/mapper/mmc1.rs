@@ -62,9 +62,9 @@ pub struct Mmc1 {
     chr_bank_hi: usize,
     chr_bank_lo: usize,
     prg_bank: usize,
-    prg_ram_bank: Option<Mem<0x2000>>,
-    prg_rom_banks: Vec<Mem<0x4000>>,
-    chr_rom_banks: Vec<Mem<0x2000>>,
+    vram: Option<Mem<0x2000>>,
+    prg_banks: Vec<Mem<0x4000>>,
+    chr_banks: Vec<Mem<0x2000>>,
 }
 
 impl Mmc1 {
@@ -82,9 +82,9 @@ impl Mmc1 {
             chr_bank_hi: 0,
             chr_bank_lo: 0,
             prg_bank: 0,
-            prg_ram_bank,
-            prg_rom_banks,
-            chr_rom_banks,
+            vram: prg_ram_bank,
+            prg_banks: prg_rom_banks,
+            chr_banks: chr_rom_banks,
         }
     }
 }
@@ -97,34 +97,28 @@ impl Mapper for Mmc1 {
             self.control_register.prg_mode()
         );
         match (addr, self.control_register.prg_mode()) {
-            (0x6000..=0x7FFF, _) => self
-                .prg_ram_bank
-                .as_ref()
-                .map(|bank| bank.read(addr & 0x1FFF)),
+            (0x6000..=0x7FFF, _) => self.vram.as_ref().map(|bank| bank.read(addr & 0x1FFF)),
             // full bank
             (0x8000..=0xBFFF, 0) | (0x8000..=0xBFFF, 1) => self
-                .prg_rom_banks
+                .prg_banks
                 .get(self.prg_bank & 0xFE)
                 .map(|bank| bank.read(addr)),
             (0xC000..=0xFFFF, 0) | (0xC000..=0xFFFF, 1) => self
-                .prg_rom_banks
+                .prg_banks
                 .get(self.prg_bank & 0xFE + 1)
                 .map(|bank| bank.read(addr)),
             // first bank fixed
-            (0x8000..=0xBFFF, 2) => self.prg_rom_banks.get(0).map(|bank| bank.read(addr)),
+            (0x8000..=0xBFFF, 2) => self.prg_banks.first().map(|bank| bank.read(addr)),
             (0xC000..=0xFFFF, 2) => self
-                .prg_rom_banks
+                .prg_banks
                 .get(self.prg_bank)
                 .map(|bank| bank.read(addr)),
             // last bank fixed
             (0x8000..=0xBFFF, 3) => self
-                .prg_rom_banks
+                .prg_banks
                 .get(self.prg_bank)
                 .map(|bank| bank.read(addr)),
-            (0xC000..=0xFFFF, 3) => self
-                .prg_rom_banks
-                .get(self.prg_rom_banks.len() - 1)
-                .map(|bank| bank.read(addr)),
+            (0xC000..=0xFFFF, 3) => self.prg_banks.last().map(|bank| bank.read(addr)),
             _ => {
                 debug!("MMC1 read at {:#06x} not handled", addr);
                 None
@@ -135,7 +129,7 @@ impl Mapper for Mmc1 {
     fn cpu_map_write(&mut self, addr: u16, data: u8) -> bool {
         match (addr, data, self.shift_count) {
             (0x6000..=0x7FFF, _, _) => {
-                if let Some(prg_ram) = self.prg_ram_bank.as_mut() {
+                if let Some(prg_ram) = self.vram.as_mut() {
                     prg_ram.write(addr, data);
                     true
                 } else {
@@ -184,22 +178,22 @@ impl Mapper for Mmc1 {
     fn ppu_map_read(&self, addr: u16) -> Option<u8> {
         match (addr, self.control_register.chr_mode()) {
             (0x0000..=0x1FFF, 0) => self
-                .chr_rom_banks
+                .chr_banks
                 .get(self.chr_bank_lo)
                 .map(|bank| bank.read(addr)),
             (0x0000..=0x0FFF, 1) => self
-                .chr_rom_banks
+                .chr_banks
                 .get(self.chr_bank_lo & 0xFE)
                 .map(|bank| bank.read(addr)),
             (0x1000..=0x1FFF, 1) => self
-                .chr_rom_banks
+                .chr_banks
                 .get(self.chr_bank_hi & 0xFE)
                 .map(|bank| bank.read(addr)),
             _ => None,
         }
     }
 
-    fn ppu_map_write(&self, _addr: u16, _data: u8) -> bool {
+    fn ppu_map_write(&mut self, _addr: u16, _data: u8) -> bool {
         false
     }
 

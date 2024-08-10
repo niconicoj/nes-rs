@@ -6,13 +6,13 @@ use bevy_egui::egui::Ui;
 mod dummy;
 mod mmc1;
 mod nrom;
-// mod uxrom;
+mod uxrom;
 
 pub trait Mapper: Send + Sync {
     fn cpu_map_read(&self, addr: u16) -> Option<u8>;
     fn cpu_map_write(&mut self, addr: u16, data: u8) -> bool;
     fn ppu_map_read(&self, addr: u16) -> Option<u8>;
-    fn ppu_map_write(&self, addr: u16, data: u8) -> bool;
+    fn ppu_map_write(&mut self, addr: u16, data: u8) -> bool;
     fn mirroring(&self) -> Option<Mirroring>;
     fn ui(&self, ui: &mut Ui);
 }
@@ -29,7 +29,7 @@ pub fn build_mapper(
     let mapper = match cartridge.mapper_id {
         0x00 => nrom::build_nrom_mapper(cartridge, reader),
         0x01 => mmc1::build_mmc1_mapper(cartridge, reader),
-        // 0x02 => mmc1::build_uxrom_mapper(cartridge, reader),
+        0x02 => uxrom::build_uxrom_mapper(cartridge, reader),
         _ => todo!("mapper {} is not implemented yet", cartridge.mapper_id),
     };
 

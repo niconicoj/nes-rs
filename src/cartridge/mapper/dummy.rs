@@ -17,7 +17,7 @@ impl Mapper for DummyMapper {
     fn ppu_map_read(&self, _addr: u16) -> Option<u8> {
         None
     }
-    fn ppu_map_write(&self, _addr: u16, _data: u8) -> bool {
+    fn ppu_map_write(&mut self, _addr: u16, _data: u8) -> bool {
         false
     }
 

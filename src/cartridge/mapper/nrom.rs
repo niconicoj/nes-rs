@@ -20,8 +20,8 @@ pub fn build_nrom_mapper(header: &CartridgeHeader, reader: impl BufRead) -> Box<
 
 #[derive(Default)]
 pub struct Nrom128 {
-    prg_rom: Mem<0x4000>,
-    chr_rom: Mem<0x2000>,
+    prg_bank: Mem<0x4000>,
+    chr_bank: Mem<0x2000>,
 }
 
 impl Nrom128 {
@@ -30,14 +30,17 @@ impl Nrom128 {
         reader.read_exact(&mut prg_rom.as_mut_slice()).unwrap();
         let mut chr_rom = Mem::default();
         reader.read_exact(&mut chr_rom.as_mut_slice()).unwrap();
-        Self { prg_rom, chr_rom }
+        Self {
+            prg_bank: prg_rom,
+            chr_bank: chr_rom,
+        }
     }
 }
 
 impl Mapper for Nrom128 {
     fn cpu_map_read(&self, addr: u16) -> Option<u8> {
         if addr >= 0x8000 {
-            Some(self.prg_rom.read(addr))
+            Some(self.prg_bank.read(addr))
         } else {
             None
         }
@@ -49,13 +52,13 @@ impl Mapper for Nrom128 {
 
     fn ppu_map_read(&self, addr: u16) -> Option<u8> {
         if addr < 0x2000 {
-            Some(self.chr_rom.read(addr))
+            Some(self.chr_bank.read(addr))
         } else {
             None
         }
     }
 
-    fn ppu_map_write(&self, addr: u16, _data: u8) -> bool {
+    fn ppu_map_write(&mut self, addr: u16, _data: u8) -> bool {
         addr < 0x2000
     }
 
@@ -105,7 +108,7 @@ impl Mapper for Nrom256 {
         }
     }
 
-    fn ppu_map_write(&self, addr: u16, _data: u8) -> bool {
+    fn ppu_map_write(&mut self, addr: u16, _data: u8) -> bool {
         addr < 0x2000
     }
 

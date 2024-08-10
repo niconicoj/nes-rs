@@ -1,70 +1,107 @@
-use bevy::log::debug;
+use std::io::BufRead;
 
-use super::{MapResult, Mapper};
-use crate::cartridge::Mirroring;
+use bevy::log::info;
+
+use super::Mapper;
+use crate::{
+    cartridge::{CartridgeHeader, Mirroring},
+    mem::Mem,
+};
+
+pub fn build_uxrom_mapper(header: &CartridgeHeader, mut reader: impl BufRead) -> Box<dyn Mapper> {
+    info!("PRG banks: {}", header.prg_rom_banks);
+    let mut prg_banks = vec![Mem::default(); header.prg_rom_banks as usize];
+    for bank in prg_banks.iter_mut() {
+        reader.read_exact(&mut bank.as_mut_slice()).unwrap();
+    }
+
+    let mut chr_bank = Mem::default();
+    reader.read_exact(&mut chr_bank.as_mut_slice()).unwrap();
+
+    let prg_ram_bank = if header.prg_ram_banks > 0 {
+        Some(Mem::default())
+    } else {
+        None
+    };
+
+    Box::new(Uxrom::new(prg_banks, chr_bank, prg_ram_bank, true))
+}
 
 pub struct Uxrom {
-    prg_bank_nb: usize,
-    chr_bank_nb: usize,
-    vram: [u8; 0x2000],
+    prg_banks: Vec<Mem<0x4000>>,
+    chr_bank: Mem<0x2000>,
+    vram: Option<Mem<0x2000>>,
     bank_select: usize,
+    bus_conflict: bool,
 }
 
 impl Uxrom {
-    pub fn new(prg_bank_nb: usize, chr_bank_nb: usize) -> Self {
+    pub fn new(
+        prg_banks: Vec<Mem<16384>>,
+        chr_bank: Mem<8192>,
+        vram: Option<Mem<8192>>,
+        bus_conflict: bool,
+    ) -> Self {
         Self {
-            prg_bank_nb,
-            chr_bank_nb,
-            vram: [0; 0x2000],
+            prg_banks,
+            chr_bank,
+            vram,
             bank_select: 0,
+            bus_conflict: true,
         }
     }
 }
 
 impl Mapper for Uxrom {
-    fn cpu_map_read(&self, addr: u16) -> Option<MapResult> {
+    fn cpu_map_read(&self, addr: u16) -> Option<u8> {
         match addr {
-            0x6000..=0x7FFF => Some(MapResult::Instant {
-                data: self.vram[(addr & 0x1FFF) as usize],
-            }),
-            0x8000..=0xBFFF => Some(MapResult::Rom {
-                bank: self.bank_select,
-                addr,
-            }),
-            0xC000..=0xFFFF => Some(MapResult::Rom {
-                bank: self.prg_bank_nb - 1,
-                addr,
-            }),
+            0x6000..=0x7FFF => self.vram.as_ref().map(|bank| bank.read(addr & 0x1FFF)),
+            0x8000..=0xBFFF => self
+                .prg_banks
+                .get(self.bank_select)
+                .map(|bank| bank.read(addr & 0x3FFF)),
+            0xC000..=0xFFFF => self.prg_banks.last().map(|bank| bank.read(addr & 0x3FFF)),
             _ => None,
         }
     }
 
-    fn cpu_map_write(&mut self, addr: u16, data: u8) -> Option<MapResult> {
+    fn cpu_map_write(&mut self, addr: u16, data: u8) -> bool {
         match addr {
-            0x6000..=0x7FFF => self.vram[(addr & 0x1FFF) as usize] = data,
-            0x8000..=0xFFFF => {
-                // bus conflict
-                self.bank_select = (data & 0x07) as usize;
+            0x6000..=0x7FFF => {
+                if let Some(prg_ram) = self.vram.as_mut() {
+                    prg_ram.write(addr, data);
+                    true
+                } else {
+                    false
+                }
             }
-            _ => {}
-        };
-        None
+            0x8000..=0xFFFF => {
+                if self.bus_conflict {
+                    let cart_data = self.prg_banks[self.bank_select].read(addr & 0x3FFF);
+                    self.bank_select = (data & cart_data & 0x07) as usize;
+                } else {
+                    self.bank_select = data as usize & 0x07;
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
-    fn ppu_map_read(&self, addr: u16) -> Option<MapResult> {
+    fn ppu_map_read(&self, addr: u16) -> Option<u8> {
         if addr < 0x2000 {
-            Some(MapResult::Rom { bank: 0, addr })
+            Some(self.chr_bank.read(addr))
         } else {
             None
         }
     }
 
-    fn ppu_map_write(&self, addr: u16, _data: u8) -> Option<MapResult> {
-        if addr < 0x2000 && self.chr_bank_nb == 0 {
-            debug!("Write to CHR Uxrom mapper: addr: {:#X}", addr);
-            Some(MapResult::Rom { bank: 0, addr })
+    fn ppu_map_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr < 0x2000 {
+            self.chr_bank.write(addr, data);
+            true
         } else {
-            None
+            false
         }
     }
 
