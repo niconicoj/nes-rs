@@ -47,7 +47,7 @@ impl Plugin for NesPlugin {
         app.insert_resource(self.args.clone())
             .add_plugins((CpuPlugin, PpuPlugin, PalettePlugin, ApuPlugin))
             .add_systems(Startup, init_nes)
-            .add_systems(Update, update_controller_state);
+            .add_systems(FixedPreUpdate, update_controller_state);
     }
 }
 

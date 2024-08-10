@@ -22,16 +22,27 @@ pub fn build_mmc1_mapper(header: &CartridgeHeader, mut reader: impl BufRead) -> 
         reader.read_exact(&mut bank.as_mut_slice()).unwrap();
     }
 
-    let prg_ram_bank = if header.prg_ram_banks > 0 {
+    let prg_ram = if header.prg_ram_banks > 0 || header.battery {
+        info!("using PRG RAM");
         Some(Mem::default())
     } else {
+        info!("No PRG RAM");
+        None
+    };
+
+    let chr_ram = if header.chr_rom_banks == 0 {
+        info!("using CHR RAM");
+        Some(Mem::default())
+    } else {
+        info!("No CHR RAM");
         None
     };
 
     Box::new(Mmc1::new(
         prg_banks,
         chr_banks,
-        prg_ram_bank,
+        prg_ram,
+        chr_ram,
         header.mirroring,
     ))
 }
@@ -62,7 +73,8 @@ pub struct Mmc1 {
     chr_bank_hi: usize,
     chr_bank_lo: usize,
     prg_bank: usize,
-    vram: Option<Mem<0x2000>>,
+    prg_ram: Option<Mem<0x2000>>,
+    chr_ram: Option<Mem<0x2000>>,
     prg_banks: Vec<Mem<0x4000>>,
     chr_banks: Vec<Mem<0x2000>>,
 }
@@ -71,7 +83,8 @@ impl Mmc1 {
     pub fn new(
         prg_rom_banks: Vec<Mem<0x4000>>,
         chr_rom_banks: Vec<Mem<0x2000>>,
-        prg_ram_bank: Option<Mem<0x2000>>,
+        prg_ram: Option<Mem<0x2000>>,
+        chr_ram: Option<Mem<0x2000>>,
         mirroring: Mirroring,
     ) -> Self {
         Self {
@@ -81,7 +94,8 @@ impl Mmc1 {
             chr_bank_hi: 0,
             chr_bank_lo: 0,
             prg_bank: 0,
-            vram: prg_ram_bank,
+            prg_ram,
+            chr_ram,
             prg_banks: prg_rom_banks,
             chr_banks: chr_rom_banks,
         }
@@ -100,7 +114,7 @@ impl Mmc1 {
 impl Mapper for Mmc1 {
     fn cpu_map_read(&self, addr: u16) -> Option<u8> {
         match (addr, self.control_register.prg_mode()) {
-            (0x6000..=0x7FFF, _) => self.vram.as_ref().map(|bank| bank.read(addr & 0x1FFF)),
+            (0x6000..=0x7FFF, _) => self.prg_ram.as_ref().map(|bank| bank.read(addr & 0x1FFF)),
             // full bank
             (0x8000..=0xBFFF, 0) | (0x8000..=0xBFFF, 1) => self
                 .prg_banks
@@ -129,7 +143,7 @@ impl Mapper for Mmc1 {
     fn cpu_map_write(&mut self, addr: u16, data: u8) -> bool {
         match (addr, data, self.shift_count) {
             (0x6000..=0x7FFF, _, _) => {
-                if let Some(prg_ram) = self.vram.as_mut() {
+                if let Some(prg_ram) = self.prg_ram.as_mut() {
                     prg_ram.write(addr, data);
                     true
                 } else {
@@ -168,25 +182,34 @@ impl Mapper for Mmc1 {
     }
 
     fn ppu_map_read(&self, addr: u16) -> Option<u8> {
-        match (addr, self.control_register.chr_mode()) {
-            (0x0000..=0x1FFF, 0) => self
-                .chr_banks
-                .get(self.chr_bank_lo)
-                .map(|bank| bank.read(addr)),
-            (0x0000..=0x0FFF, 1) => self
-                .chr_banks
-                .get(self.chr_bank_lo & 0xFE)
-                .map(|bank| bank.read(addr)),
-            (0x1000..=0x1FFF, 1) => self
-                .chr_banks
-                .get(self.chr_bank_hi & 0xFE)
-                .map(|bank| bank.read(addr)),
-            _ => None,
+        if let Some(chr_ram) = self.chr_ram.as_ref() {
+            Some(chr_ram.read(addr))
+        } else {
+            match (addr, self.control_register.chr_mode()) {
+                (0x0000..=0x1FFF, 0) => self
+                    .chr_banks
+                    .get(self.chr_bank_lo)
+                    .map(|bank| bank.read(addr)),
+                (0x0000..=0x0FFF, 1) => self
+                    .chr_banks
+                    .get(self.chr_bank_lo & 0xFE)
+                    .map(|bank| bank.read(addr)),
+                (0x1000..=0x1FFF, 1) => self
+                    .chr_banks
+                    .get(self.chr_bank_hi & 0xFE)
+                    .map(|bank| bank.read(addr)),
+                _ => None,
+            }
         }
     }
 
-    fn ppu_map_write(&mut self, _addr: u16, _data: u8) -> bool {
-        false
+    fn ppu_map_write(&mut self, addr: u16, data: u8) -> bool {
+        if let Some(chr_ram) = self.chr_ram.as_mut() {
+            chr_ram.write(addr, data);
+            true
+        } else {
+            false
+        }
     }
 
     fn mirroring(&self) -> Option<Mirroring> {
