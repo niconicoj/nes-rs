@@ -1,6 +1,9 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, window::WindowResized};
+use bevy_fundsp::prelude::Num;
 use bevy_pixel_buffer::{
-    builder::PixelBufferBuilder, frame::GetFrameFromImages, pixel_buffer::PixelBufferSize,
+    builder::PixelBufferBuilder,
+    frame::GetFrameFromImages,
+    pixel_buffer::{PixelBuffer, PixelBufferSize},
 };
 
 use super::{
@@ -23,8 +26,10 @@ pub struct ScreenBufferPlugin;
 
 impl Plugin for ScreenBufferPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, init_screen_buffer)
-            .add_systems(PostUpdate, update_screen_buffer);
+        app.add_systems(Startup, init_screen_buffer).add_systems(
+            PostUpdate,
+            (update_screen_buffer, resize_screen_buffer).chain(),
+        );
     }
 }
 
@@ -55,5 +60,19 @@ fn update_screen_buffer(
                 .get_color(color_id)
                 .expect(&format!("invalid color id {:#04x}", color_id))
         });
+    }
+}
+
+fn resize_screen_buffer(
+    mut resize_reader: EventReader<WindowResized>,
+    mut pb: Query<(&mut PixelBuffer, &ScreenBuffer)>,
+) {
+    if let Ok((mut pb, _)) = pb.get_single_mut() {
+        for e in resize_reader.read() {
+            let px_dim =
+                (e.width / (SCREEN_WIDTH as f32)).min(e.height / (SCREEN_HEIGHT as f32)) as u32;
+            info!("px_dim: {}", px_dim);
+            pb.size.pixel_size = UVec2::new(px_dim, px_dim);
+        }
     }
 }
