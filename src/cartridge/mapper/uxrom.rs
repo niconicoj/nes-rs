@@ -15,8 +15,9 @@ pub fn build_uxrom_mapper(header: &CartridgeHeader, mut reader: impl BufRead) ->
         reader.read_exact(&mut bank.as_mut_slice()).unwrap();
     }
 
-    let mut chr_bank = Mem::default();
-    reader.read_exact(&mut chr_bank.as_mut_slice()).unwrap();
+    info!("CHR banks: {}", header.chr_rom_banks);
+    let chr_bank = Mem::default();
+    // let _ = reader.read_exact(&mut chr_bank.as_mut_slice());
 
     let prg_ram_bank = if header.prg_ram_banks > 0 {
         Some(Mem::default())
@@ -32,22 +33,15 @@ pub struct Uxrom {
     chr_bank: Mem<0x2000>,
     vram: Option<Mem<0x2000>>,
     bank_select: usize,
-    bus_conflict: bool,
 }
 
 impl Uxrom {
-    pub fn new(
-        prg_banks: Vec<Mem<16384>>,
-        chr_bank: Mem<8192>,
-        vram: Option<Mem<8192>>,
-        bus_conflict: bool,
-    ) -> Self {
+    pub fn new(prg_banks: Vec<Mem<16384>>, chr_bank: Mem<8192>, vram: Option<Mem<8192>>) -> Self {
         Self {
             prg_banks,
             chr_bank,
             vram,
             bank_select: 0,
-            bus_conflict: true,
         }
     }
 }
@@ -76,12 +70,7 @@ impl Mapper for Uxrom {
                 }
             }
             0x8000..=0xFFFF => {
-                if self.bus_conflict {
-                    let cart_data = self.prg_banks[self.bank_select].read(addr & 0x3FFF);
-                    self.bank_select = (data & cart_data & 0x07) as usize;
-                } else {
-                    self.bank_select = data as usize & 0x07;
-                }
+                self.bank_select = data as usize & 0x07;
                 true
             }
             _ => false,
