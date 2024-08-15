@@ -296,7 +296,7 @@ impl Plugin for CpuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BreakPointState>()
             .insert_resource(BreakPointState::default())
-            .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .insert_resource(Time::<Fixed>::from_hz(240.0))
             .add_systems(FixedUpdate, run_emulation);
     }
 }

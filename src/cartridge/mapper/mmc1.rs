@@ -74,7 +74,7 @@ pub struct Mmc1 {
     chr_bank_lo: usize,
     prg_bank: usize,
     prg_ram: Option<Mem<0x2000>>,
-    chr_ram: Option<Mem<0x2000>>,
+    chr_ram: Option<Mem<0x4000>>,
     prg_banks: Vec<Mem<0x4000>>,
     chr_banks: Vec<Mem<0x2000>>,
 }
@@ -84,7 +84,7 @@ impl Mmc1 {
         prg_rom_banks: Vec<Mem<0x4000>>,
         chr_rom_banks: Vec<Mem<0x2000>>,
         prg_ram: Option<Mem<0x2000>>,
-        chr_ram: Option<Mem<0x2000>>,
+        chr_ram: Option<Mem<0x4000>>,
         mirroring: Mirroring,
     ) -> Self {
         Self {
@@ -104,7 +104,7 @@ impl Mmc1 {
 
 impl Mmc1 {
     fn load_shift_register(&mut self, data: u8) -> u8 {
-        let loaded_value = self.shift_register >> 1 | ((data & 0x01) << 4);
+        let loaded_value = (self.shift_register >> 1) | ((data & 0x01) << 4);
         self.shift_count = 0;
         self.shift_register = 0;
         loaded_value
@@ -183,7 +183,11 @@ impl Mapper for Mmc1 {
 
     fn ppu_map_read(&self, addr: u16) -> Option<u8> {
         if let Some(chr_ram) = self.chr_ram.as_ref() {
-            Some(chr_ram.read(addr))
+            if addr < 0x2000 {
+                Some(chr_ram.read(addr))
+            } else {
+                None
+            }
         } else {
             match (addr, self.control_register.chr_mode()) {
                 (0x0000..=0x1FFF, 0) => self
@@ -204,9 +208,13 @@ impl Mapper for Mmc1 {
     }
 
     fn ppu_map_write(&mut self, addr: u16, data: u8) -> bool {
-        if let Some(chr_ram) = self.chr_ram.as_mut() {
-            chr_ram.write(addr, data);
-            true
+        if addr < 0x2000 {
+            if let Some(chr_ram) = self.chr_ram.as_mut() {
+                chr_ram.write(addr, data);
+                true
+            } else {
+                false
+            }
         } else {
             false
         }
