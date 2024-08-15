@@ -16,7 +16,7 @@ const SCREEN_HEIGHT: u32 = 240;
 
 const SCREEN_SIZE: PixelBufferSize = PixelBufferSize {
     size: UVec2::new(SCREEN_WIDTH, SCREEN_HEIGHT),
-    pixel_size: UVec2::new(4, 4),
+    pixel_size: UVec2::new(1, 1),
 };
 
 #[derive(Component)]
@@ -65,14 +65,13 @@ fn update_screen_buffer(
 
 fn resize_screen_buffer(
     mut resize_reader: EventReader<WindowResized>,
-    mut pb: Query<(&mut PixelBuffer, &ScreenBuffer)>,
+    mut pb: Query<&mut Transform, With<PixelBuffer>>,
 ) {
-    if let Ok((mut pb, _)) = pb.get_single_mut() {
+    if let Ok(mut tf) = pb.get_single_mut() {
         for e in resize_reader.read() {
-            let px_dim =
-                (e.width / (SCREEN_WIDTH as f32)).min(e.height / (SCREEN_HEIGHT as f32)) as u32;
+            let px_dim = (e.width / (SCREEN_WIDTH as f32)).min(e.height / (SCREEN_HEIGHT as f32));
             info!("px_dim: {}", px_dim);
-            pb.size.pixel_size = UVec2::new(px_dim, px_dim);
+            tf.scale = Vec3::new(px_dim, px_dim, 1.0);
         }
     }
 }

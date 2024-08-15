@@ -25,7 +25,7 @@ pub fn build_uxrom_mapper(header: &CartridgeHeader, mut reader: impl BufRead) ->
         None
     };
 
-    Box::new(Uxrom::new(prg_banks, chr_bank, prg_ram_bank, true))
+    Box::new(Uxrom::new(prg_banks, chr_bank, prg_ram_bank))
 }
 
 pub struct Uxrom {
