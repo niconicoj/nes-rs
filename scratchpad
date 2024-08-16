@@ -1,0 +1,3 @@
+jsr from e561 to 9825
+jsr from 983d to 99a0
+rts on 9942 returning to 98ee looks sus

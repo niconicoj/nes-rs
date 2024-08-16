@@ -197,7 +197,10 @@ impl<'w> CpuQueryItem<'w> {
         }
         if self.bus.nmi() {
             self.nmi();
+        } else if self.bus.irq() {
+            self.irq();
         }
+
         return true;
     }
 

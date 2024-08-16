@@ -98,6 +98,10 @@ impl<'w> CpuBusQueryItem<'w> {
         self.ppu.nmi()
     }
 
+    pub fn irq(&mut self) -> bool {
+        self.apu.irq()
+    }
+
     pub fn tick(&mut self, cycles: usize) -> bool {
         self.ppu.tick();
         return self.apu.tick(cycles);

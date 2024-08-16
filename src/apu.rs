@@ -270,6 +270,7 @@ pub struct Apu {
     status: ApuStatus,
     frame_counter: FrameCounter,
     cycles: usize,
+    irq: bool,
 }
 
 impl Default for Apu {
@@ -281,6 +282,7 @@ impl Default for Apu {
             status: ApuStatus::default(),
             frame_counter: FrameCounter::default(),
             cycles: 0,
+            irq: false,
         }
     }
 }
@@ -310,6 +312,8 @@ impl Apu {
                 }
                 _ => return false,
             }
+            self.irq =
+                (self.cycles == 14914 || self.cycles == 0) && self.frame_counter.irq_inhibit() == 0;
             self.pulse[0].update_target_period();
             self.pulse[1].update_target_period();
             return true;
@@ -330,6 +334,12 @@ impl Apu {
         if self.status.triangle() {
             self.triangle.clock_linear_counter();
         }
+    }
+
+    pub fn irq(&mut self) -> bool {
+        let v = self.irq;
+        self.irq = false;
+        v
     }
 
     pub fn half_frame_tick(&mut self) {

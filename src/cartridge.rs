@@ -63,7 +63,7 @@ impl CartridgeHeader {
             .map(|b| format!("{:#04x} ({:#010b})", b, b))
             .collect::<Vec<_>>()
             .join("\n");
-        debug!("Parsing header \n{}", raw_display);
+        info!("Parsing header \n{}", raw_display);
         match bytes[7] & 0x0C {
             0x0C => Self::parse_nes2(bytes),
             _ => Self::parse_ines(bytes),
