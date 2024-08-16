@@ -291,6 +291,8 @@ impl Apu {
     pub fn tick(&mut self, cycles: usize) -> bool {
         if cycles % 6 == 0 {
             self.cycles += 1;
+            self.pulse[0].update_target_period();
+            self.pulse[1].update_target_period();
             match (self.cycles, self.frame_counter.step_mode()) {
                 (3729, _) => self.quarter_frame_tick(),
                 (7457, _) => {
@@ -314,9 +316,7 @@ impl Apu {
             }
             self.irq =
                 (self.cycles == 14914 || self.cycles == 0) && self.frame_counter.irq_inhibit() == 0;
-            self.pulse[0].update_target_period();
-            self.pulse[1].update_target_period();
-            return true;
+            true
         } else {
             false
         }
